@@ -1,0 +1,16 @@
+{
+  "name": "doc-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Re-rendered character-by-character reader for Google Docs and PDFs (Chrome extension). Tests only — the extension itself has no build step.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.10.38"
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "manifest_version": 3,
+  "name": "Cadence Reading",
+  "version": "0.1.0",
+  "description": "Reveals Google Docs and PDFs character-by-character in a clean reader overlay, with comments, notes, and highlights.",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://docs.google.com/document/*",
+        "https://drive.google.com/file/*"
+      ],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Start Cadence Reading",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "start-session": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+R",
+        "mac": "Command+Shift+R"
+      },
+      "description": "Start Cadence Reading on the current document"
+    }
+  },
+  "oauth2": {
+    "client_id": "790510271956-2ptrkv4fsbiis75ffucu3kn46m0tnrug.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.readonly"
+    ]
+  },
+  "permissions": ["identity", "storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://docs.google.com/*",
+    "https://docs.googleapis.com/*",
+    "https://drive.google.com/*",
+    "https://www.googleapis.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/*.js",
+        "src/api/*.js",
+        "src/render/*.js",
+        "src/reveal/*.js",
+        "src/notes/*.js",
+        "src/pdf/*.js",
+        "vendor/pdfjs/*.mjs",
+        "styles/*.css"
+      ],
+      "matches": ["https://docs.google.com/*", "https://drive.google.com/*"]
+    }
+  ]
+}
