@@ -25,8 +25,14 @@ export function buildInlineObject(objectId, inlineObjects) {
 function applySize(img, size) {
   const width = dimToPx(size?.width);
   const height = dimToPx(size?.height);
-  if (width) img.style.width = `${width}px`;
-  if (height) img.style.height = `${height}px`;
+  if (width && height) img.style.aspectRatio = `${width} / ${height}`;
+  if (width) {
+    img.style.width = `${width}px`;
+    img.style.height = 'auto';
+  } else if (height) {
+    img.style.height = `${height}px`;
+    img.style.width = 'auto';
+  }
   img.style.maxWidth = '100%';
 }
 
