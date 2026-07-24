@@ -1,11 +1,62 @@
-import { loadSettings, saveSettings, DEFAULTS, clampSpeed } from '../src/settings.js';
+import {
+  loadSettings,
+  saveSettings,
+  DEFAULTS,
+  LIMITS,
+  clampSpeed,
+  clampLineHeight,
+  clampContentWidth,
+} from '../src/settings.js';
+import { resolveTheme } from '../src/overlay.js';
 import { listStoredPages, deleteStoredPage, clearAllNotes } from '../src/notes/storage.js';
 
 const speed = document.getElementById('charsPerSec');
 const speedVal = document.getElementById('speedVal');
-const showResolved = document.getElementById('showResolvedComments');
 const fontFamily = document.getElementById('fontFamily');
+const focusMode = document.getElementById('focusMode');
+const bionicMode = document.getElementById('bionicMode');
+const commentsVisible = document.getElementById('commentsVisible');
+const contentWidth = document.getElementById('contentWidth');
+const contentWidthVal = document.getElementById('contentWidthVal');
+const lineHeight = document.getElementById('lineHeight');
+const lineHeightVal = document.getElementById('lineHeightVal');
+const paperBg = document.getElementById('paperBg');
+const paperBgVal = document.getElementById('paperBgVal');
+const paperBgHint = document.getElementById('paperBgHint');
+const paperFg = document.getElementById('paperFg');
+const paperFgVal = document.getElementById('paperFgVal');
+const paperFgHint = document.getElementById('paperFgHint');
+const preview = document.getElementById('previewPaper');
 const statusEl = document.getElementById('status');
+
+const DEFAULT_READER_FONT = 'Georgia, "Iowan Old Style", Charter, Cambria, serif';
+
+// The two pickers edit whichever theme is active; both palettes are held here.
+const paper = { light: { bg: '', fg: '' }, dark: { bg: '', fg: '' } };
+let activeTheme = 'light';
+
+const themeSetting = () => radioValue('theme') || DEFAULTS.theme;
+
+function loadPickersForTheme() {
+  activeTheme = resolveTheme(themeSetting());
+  paperBg.value = paper[activeTheme].bg;
+  paperFg.value = paper[activeTheme].fg;
+  paperBgHint.textContent = `The reading surface · ${activeTheme} mode`;
+  paperFgHint.textContent = `The ink · ${activeTheme} mode`;
+}
+
+function reflectPreview() {
+  preview.style.setProperty('--dr-reader-leading', lineHeight.value);
+  preview.style.lineHeight = lineHeight.value;
+  preview.style.width = `${(contentWidth.value / LIMITS.maxContentWidth) * 100}%`;
+  preview.style.backgroundColor = paperBg.value;
+  preview.style.color = paperFg.value;
+  preview.style.fontFamily = fontFamily.value.trim() || DEFAULT_READER_FONT;
+  contentWidthVal.textContent = contentWidth.value;
+  lineHeightVal.textContent = Number(lineHeight.value).toFixed(2);
+  paperBgVal.textContent = paperBg.value;
+  paperFgVal.textContent = paperFg.value;
+}
 
 const radioValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
 const setRadio = (name, value) => {
@@ -17,17 +68,45 @@ async function init() {
   const settings = await loadSettings();
   speed.value = settings.charsPerSec;
   speedVal.textContent = settings.charsPerSec;
-  setRadio('pauseAt', settings.pauseAt);
   setRadio('theme', settings.theme);
-  showResolved.checked = settings.showResolvedComments;
+  focusMode.checked = settings.focusMode;
+  bionicMode.checked = settings.bionicMode;
+  commentsVisible.checked = settings.commentsVisible;
   fontFamily.value = settings.fontFamily;
+  contentWidth.value = settings.contentWidth;
+  lineHeight.value = settings.lineHeight;
+  paper.light = { bg: settings.paperBg, fg: settings.paperFg };
+  paper.dark = { bg: settings.paperBgDark, fg: settings.paperFgDark };
+  loadPickersForTheme();
+  reflectPreview();
 
   speed.addEventListener('input', () => (speedVal.textContent = speed.value));
+  for (const c of [contentWidth, lineHeight, fontFamily]) {
+    c.addEventListener('input', reflectPreview);
+  }
+  const onPaperInput = () => {
+    paper[activeTheme] = { bg: paperBg.value, fg: paperFg.value };
+    reflectPreview();
+  };
+  paperBg.addEventListener('input', onPaperInput);
+  paperFg.addEventListener('input', onPaperInput);
+  for (const r of document.querySelectorAll('input[name="theme"]')) {
+    r.addEventListener('change', () => {
+      loadPickersForTheme();
+      reflectPreview();
+    });
+  }
   const controls = [
     speed,
-    showResolved,
+    focusMode,
+    bionicMode,
+    commentsVisible,
     fontFamily,
-    ...document.querySelectorAll('input[name="pauseAt"], input[name="theme"]'),
+    contentWidth,
+    lineHeight,
+    paperBg,
+    paperFg,
+    ...document.querySelectorAll('input[name="theme"]'),
   ];
   for (const c of controls) c.addEventListener('change', persist);
 }
@@ -37,10 +116,17 @@ async function persist() {
   const charsPerSec = clampSpeed(Number(speed.value) || DEFAULTS.charsPerSec);
   const patch = {
     charsPerSec,
-    pauseAt: radioValue('pauseAt') || DEFAULTS.pauseAt,
     theme: radioValue('theme') || DEFAULTS.theme,
-    showResolvedComments: showResolved.checked,
+    focusMode: focusMode.checked,
+    bionicMode: bionicMode.checked,
+    commentsVisible: commentsVisible.checked,
     fontFamily: fontFamily.value.trim(),
+    contentWidth: clampContentWidth(Number(contentWidth.value) || DEFAULTS.contentWidth),
+    lineHeight: clampLineHeight(Number(lineHeight.value) || DEFAULTS.lineHeight),
+    paperBg: paper.light.bg,
+    paperFg: paper.light.fg,
+    paperBgDark: paper.dark.bg,
+    paperFgDark: paper.dark.fg,
   };
   speed.value = charsPerSec;
   speedVal.textContent = charsPerSec;

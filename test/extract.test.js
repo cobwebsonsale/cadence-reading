@@ -10,6 +10,7 @@ import {
   groupParagraphs,
   splitRunInHeading,
   imageRegionsFromOps,
+  vectorRegionsFromOps,
   matchFigures,
   remapControlChars,
   composeDiacritics,
@@ -252,6 +253,42 @@ test('groupParagraphs does not split a drop-cap spurious same-row indent', () =>
   assert.match(paras[0].runs.map((r) => r.text).join(''), /too much practice/);
 });
 
+test('groupParagraphs ignores a lone left-margin mark when measuring indents', () => {
+  // A badge sits far left of the body margin; it must not redefine the margin and
+  // make every body line read as indented.
+  const lines = [
+    bodyLine(20, 730, 'MARK'),
+    bodyLine(52, 700, 'The body text begins here at the true'),
+    bodyLine(52, 690, 'left margin and wraps across'),
+    bodyLine(52, 680, 'several lines with no indent'),
+    bodyLine(52, 670, 'and no blank-line breaks between them.'),
+  ];
+  const paras = groupParagraphs(lines).map((p) => p.runs.map((r) => r.text).join(''));
+  assert.equal(paras.length, 2);
+  assert.match(paras[1], /^The body text begins here.*between them\.$/);
+});
+
+test('groupParagraphs keeps a large-font title together amid small-font body leading', () => {
+  // The title's own line leading dwarfs the body median; the gap threshold must
+  // scale with the line's font so the title stays one paragraph.
+  const heading = (y, text) => ({ x0: 52, endX: 400, y, fontSize: 24, runs: [{ text, bold: false, italic: false }] });
+  const lines = [
+    heading(700, 'A multi-line title that'),
+    heading(672, 'spans three separate'),
+    heading(644, 'visual lines here'),
+    bodyLine(52, 610, 'The body starts well below the title'),
+    bodyLine(52, 600, 'and wraps across many lines'),
+    bodyLine(52, 590, 'at the ordinary body leading'),
+    bodyLine(52, 580, 'so that the small line advance'),
+    bodyLine(52, 570, 'is the dominant rhythm on'),
+    bodyLine(52, 560, 'the page and sets the median'),
+    bodyLine(52, 550, 'used to judge paragraph breaks.'),
+  ];
+  const paras = groupParagraphs(lines).map((p) => p.runs.map((r) => r.text).join(''));
+  assert.equal(paras.length, 2);
+  assert.match(paras[0], /^A multi-line title that.*visual lines here$/);
+});
+
 const run = (text, bold = false) => ({ text, bold, italic: false });
 
 test('splitRunInHeading pulls a bold run-in label off the front of a paragraph', () => {
@@ -301,6 +338,35 @@ test('imageRegionsFromOps drops tiny regions and honors save/restore', () => {
   // Inside save/restore: a 20x20 image (too small → dropped). After restore the
   // matrix is back to identity, so the second paint is a 1x1 unit square (dropped).
   assert.equal(imageRegionsFromOps(fnArray, argsArray, OPS).length, 0);
+});
+
+const VPAINT = 6;
+const VOPS = { save: 1, restore: 2, transform: 3, constructPath: 4, endPath: 5, paint: new Set([VPAINT]) };
+const PATH = (minMax) => [null, null, minMax];
+
+test('vectorRegionsFromOps clusters nearby vector marks into one figure region', () => {
+  const fnArray = [];
+  const argsArray = [];
+  // A grid of small filled boxes forming a ~120x80 figure, each painted after its path.
+  for (let row = 0; row < 4; row++) {
+    for (let cvol = 0; cvol < 3; cvol++) {
+      const x = 100 + cvol * 40;
+      const y = 500 + row * 20;
+      fnArray.push(VOPS.constructPath, VPAINT);
+      argsArray.push(PATH([x, y, x + 30, y + 12]), null);
+    }
+  }
+  const regions = vectorRegionsFromOps(fnArray, argsArray, VOPS, [0, 0, 595, 782]);
+  assert.equal(regions.length, 1);
+  assert.ok(regions[0].bbox.x0 <= 100 && regions[0].bbox.x1 >= 210);
+  assert.ok(regions[0].yBottom <= 500 && regions[0].yTop >= 560);
+});
+
+test('vectorRegionsFromOps ignores long thin rules and undersized clusters', () => {
+  // A full-height margin rule (thin + long) and a lone small box: neither is a region.
+  const fnArray = [VOPS.constructPath, VPAINT, VOPS.constructPath, VPAINT];
+  const argsArray = [PATH([148, 50, 148, 650]), null, PATH([100, 500, 130, 520]), null];
+  assert.equal(vectorRegionsFromOps(fnArray, argsArray, VOPS, [0, 0, 595, 782]).length, 0);
 });
 
 test('matchFigures pairs each caption with the nearest overlapping region above it', () => {
@@ -523,6 +589,15 @@ test('placeImageSegments inserts an image inline between the split column parts'
   assert.equal(out[0].length, 3, 'lines above the equation');
   assert.ok(out[1].tableImage, 'image segment in the middle');
   assert.equal(out[2].length, 2, 'lines below the equation');
+});
+
+test('placeImageSegments puts a region above all column text at the top, not the end', () => {
+  const line = (y) => ({ x0: 52, endX: 300, y });
+  const col = [line(504), line(490), line(480), line(470)]; // caption + body, all below the region
+  const region = { page: 1, bbox: { x0: 60, x1: 280, y0: 521, y1: 735 }, yTop: 735, yBottom: 521 };
+  const out = placeImageSegments([col], [region]);
+  assert.ok(out[0].tableImage, 'image comes first');
+  assert.equal(out[1].length, 4, 'all text follows the image');
 });
 
 test('equationRegions ignores a drop cap (oversized glyph at the margin)', () => {

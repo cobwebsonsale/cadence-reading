@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Cadence Reading — Google Picker</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        color: #5f6368;
+        background: #ffffff;
+      }
+      .status { font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div class="status" id="status">Connecting to Google Drive…</div>
+
+    <script>
+      const CONFIG = {
+        appId: '',
+        apiKey: '',
+        extensionId: '',
+      };
+
+      const statusEl = document.getElementById('status');
+      const opener = window.opener;
+
+      let token = null;
+      let query = '';
+      let pickerShown = false;
+      let settled = false;
+
+      function extensionOrigin() {
+        return CONFIG.extensionId ? `chrome-extension://${CONFIG.extensionId}` : null;
+      }
+
+      function post(message) {
+        if (!opener) return;
+        opener.postMessage(message, extensionOrigin() || '*');
+      }
+
+      function trusted(origin) {
+        if (!origin.startsWith('chrome-extension://')) return false;
+        const expected = extensionOrigin();
+        return !expected || origin === expected;
+      }
+
+      window.addEventListener('message', (event) => {
+        if (!trusted(event.origin)) return;
+        const data = event.data || {};
+        if (data.type === 'picker-init' && !pickerShown) {
+          token = data.token;
+          query = data.query || '';
+          openPicker();
+        }
+      });
+
+      window.addEventListener('beforeunload', () => {
+        if (!settled) post({ type: 'picker-cancel' });
+      });
+
+      function openPicker() {
+        if (!token) return;
+        statusEl.textContent = 'Opening the file picker…';
+        gapi.load('picker', { callback: showPicker });
+      }
+
+      function showPicker() {
+        pickerShown = true;
+        const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+          .setMimeTypes('application/vnd.google-apps.document,application/pdf')
+          .setIncludeFolders(false);
+        if (query && view.setQuery) view.setQuery(query);
+
+        const picker = new google.picker.PickerBuilder()
+          .setAppId(CONFIG.appId)
+          .setOAuthToken(token)
+          .setDeveloperKey(CONFIG.apiKey)
+          .addView(view)
+          .setCallback(onPick)
+          .build();
+        picker.setVisible(true);
+      }
+
+      function onPick(data) {
+        const action = data[google.picker.Response.ACTION];
+        if (action === google.picker.Action.PICKED) {
+          const doc = data[google.picker.Response.DOCUMENTS][0];
+          settled = true;
+          post({
+            type: 'picker-pick',
+            fileId: doc[google.picker.Document.ID],
+            mimeType: doc[google.picker.Document.MIME_TYPE],
+            name: doc[google.picker.Document.NAME] || '',
+          });
+          window.close();
+        } else if (action === google.picker.Action.CANCEL) {
+          settled = true;
+          post({ type: 'picker-cancel' });
+          window.close();
+        }
+      }
+    </script>
+    <script src="https://apis.google.com/js/api.js" onload="post({ type: 'picker-ready' })"></script>
+  </body>
+</html>

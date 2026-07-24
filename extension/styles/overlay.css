@@ -1,7 +1,7 @@
 .dr-overlay {
   /* Reading surface (the "paper") */
   --dr-paper-bg: #f6f0e3;
-  --dr-paper-fg: #3c3a34;
+  --dr-paper-fg: #463f36;
   --dr-paper-border: #bdc1c6;
   --dr-paper-dim: #999;
   --dr-link: #1155cc;
@@ -9,8 +9,8 @@
   --dr-content-pad: 72px 96px;
   --dr-reader-font: Georgia, "Iowan Old Style", Charter, Cambria, serif;
   --dr-reader-size: 14pt;
-  --dr-reader-leading: 1.5;
-  --dr-para-gap: 0.5em;
+  --dr-reader-leading: 1.65;
+  --dr-para-gap: 0.85em;
   --dr-faded-opacity: 0.32;
 
   /* Neutral borders + fills (theme-independent grays) */
@@ -60,6 +60,13 @@
   --dr-accent: #9b9ef0;
   --dr-highlight: rgba(245, 181, 68, 0.30);
   --dr-highlight-strong: #f5b544;
+
+  /* Dark reading surface: warm near-black paper, soft off-white ink */
+  --dr-paper-bg: #24211c;
+  --dr-paper-fg: #ddd6c8;
+  --dr-paper-border: #47433a;
+  --dr-paper-dim: #8f8878;
+  --dr-link: #8ab4f8;
 }
 .dr-overlay[data-theme="light"] {
   --dr-backdrop: #e8eaed;
@@ -99,12 +106,6 @@
   flex: 0 0 var(--dr-content-width);
   max-width: var(--dr-content-width);
   background-color: var(--dr-paper-bg);
-  /* paper tooth: two offset warm dot layers for a subtle, irregular grain */
-  background-image:
-    radial-gradient(rgba(70, 52, 22, 0.06) 0.6px, transparent 0.7px),
-    radial-gradient(rgba(70, 52, 22, 0.05) 0.6px, transparent 0.7px);
-  background-size: 3px 3px, 4px 4px;
-  background-position: 0 0, 1px 2px;
   color: var(--dr-paper-fg);
   border-radius: var(--dr-radius-sm);
   /* contact + warm ambient shadow: a sheet resting under a reading lamp */
@@ -117,6 +118,9 @@
   font-family: var(--dr-reader-font);
   font-size: var(--dr-reader-size);
   line-height: var(--dr-reader-leading);
+  font-variant-numeric: lining-nums;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 /* Last paragraph: no runway, paper ends just past the final line. */
 .dr-content-tail {
@@ -147,10 +151,10 @@
   display: none;
 }
 .dr-content h1, .dr-content h2, .dr-content h3,
-.dr-content h4, .dr-content h5, .dr-content h6 { font-weight: 700; margin: 0.7em 0 0.3em; }
+.dr-content h4, .dr-content h5, .dr-content h6 { font-weight: 700; margin: 0.7em 0 0.3em; line-height: 1.2; }
 /* Distinct size per named style so Title, Subtitle, and Heading 1–6 are all told apart. */
-.dr-content .dr-title { font-size: 1.9em; margin: 0.3em 0 0.3em; }
-.dr-content .dr-subtitle { font-size: 1.15em; font-weight: 400; color: var(--dr-paper-dim); margin: 0 0 0.6em; }
+.dr-content .dr-title { font-size: 1.9em; margin: 0.3em 0 0.3em; line-height: 1.15; }
+.dr-content .dr-subtitle { font-size: 1.15em; font-weight: 400; color: var(--dr-paper-dim); margin: 0 0 0.6em; line-height: 1.25; }
 .dr-content .dr-h1 { font-size: 1.5em; }
 .dr-content .dr-h2 { font-size: 1.28em; }
 .dr-content .dr-h3 { font-size: 1.12em; }
@@ -289,6 +293,7 @@
   font-weight: 700;
   font-family: inherit;
   margin: 0.9em 0 0.2em;
+  line-height: 1.2;
 }
 .dr-char.dr-bold { font-weight: 700; }
 .dr-char.dr-italic { font-style: italic; }
@@ -317,6 +322,11 @@
   vertical-align: -0.25em;
   mix-blend-mode: multiply;
 }
+/* on dark paper, invert the black-on-white crop to white-on-black and screen it in */
+.dr-overlay[data-theme="dark"] .dr-glyph-img {
+  filter: invert(1);
+  mix-blend-mode: screen;
+}
 
 .dr-footnote {
   font-size: 0.8em;
@@ -325,7 +335,7 @@
 .dr-para:not(.dr-footnote) + .dr-footnote {
   margin-top: 1.6em;
   padding-top: 0.8em;
-  border-top: 1px solid rgba(0, 0, 0, 0.18);
+  border-top: 1px solid var(--dr-paper-border);
 }
 
 .dr-comment {

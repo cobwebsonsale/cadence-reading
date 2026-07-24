@@ -1,16 +1,40 @@
 export const DEFAULTS = Object.freeze({
   charsPerSec: 150,
   pauseAt: 'paragraph',
-  showResolvedComments: false,
+  commentsVisible: false,
+  focusMode: true,
+  bionicMode: false,
   theme: 'auto',
   fontFamily: '',
+  lineHeight: 1.65,
+  contentWidth: 900,
+  paperBg: '#f6f0e3',
+  paperFg: '#463f36',
+  paperBgDark: '#24211c',
+  paperFgDark: '#ddd6c8',
 });
 
 export const LIMITS = Object.freeze({
   minCharsPerSec: 5,
   maxCharsPerSec: 300,
   speedStep: 10,
+  minLineHeight: 1.2,
+  maxLineHeight: 2.2,
+  lineHeightStep: 0.05,
+  minContentWidth: 520,
+  maxContentWidth: 1100,
+  contentWidthStep: 20,
 });
+
+const clampRange = (value, min, max) => Math.max(min, Math.min(max, value));
+
+export function clampLineHeight(value) {
+  return clampRange(value, LIMITS.minLineHeight, LIMITS.maxLineHeight);
+}
+
+export function clampContentWidth(value) {
+  return clampRange(value, LIMITS.minContentWidth, LIMITS.maxContentWidth);
+}
 
 export async function loadSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS);

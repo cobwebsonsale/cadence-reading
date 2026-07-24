@@ -1,5 +1,5 @@
 import * as pdfjs from '../../vendor/pdfjs/pdf.mjs';
-import { imageRegionsFromOps } from './extract.js';
+import { imageRegionsFromOps, vectorRegionsFromOps } from './extract.js';
 
 // Rasterize above 1:1 so crops stay crisp when scaled up to reader size on HiDPI.
 const RENDER_SCALE = 4;
@@ -18,9 +18,35 @@ const OP_CODES = {
   ),
 };
 
+const VECTOR_OP_CODES = {
+  save: pdfjs.OPS.save,
+  restore: pdfjs.OPS.restore,
+  transform: pdfjs.OPS.transform,
+  constructPath: pdfjs.OPS.constructPath,
+  endPath: pdfjs.OPS.endPath,
+  paint: new Set(
+    [
+      pdfjs.OPS.fill,
+      pdfjs.OPS.eoFill,
+      pdfjs.OPS.stroke,
+      pdfjs.OPS.closeStroke,
+      pdfjs.OPS.fillStroke,
+      pdfjs.OPS.eoFillStroke,
+      pdfjs.OPS.closeFillStroke,
+      pdfjs.OPS.closeEOFillStroke,
+      pdfjs.OPS.shadingFill,
+    ].filter((code) => code !== undefined)
+  ),
+};
+
 // Injected into extractBlocks: sizable image bounding boxes for one page.
 export function extractRegions(operatorList) {
   return imageRegionsFromOps(operatorList.fnArray, operatorList.argsArray, OP_CODES);
+}
+
+// Injected into extractBlocks: bounding boxes of vector-drawn figures/tables for one page.
+export function extractVectorRegions(operatorList, view) {
+  return vectorRegionsFromOps(operatorList.fnArray, operatorList.argsArray, VECTOR_OP_CODES, view);
 }
 
 // Renders a page on first use (caching a few), cropping bboxes only as the reader reaches them.

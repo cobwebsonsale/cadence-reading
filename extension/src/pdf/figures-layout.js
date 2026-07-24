@@ -1,5 +1,11 @@
 const FIGURE_MIN_SIZE = 40;
 const CAPTION_ABOVE_TOL = 4;
+const VECTOR_MIN_SIZE = 40;
+const VECTOR_MIN_MARKS = 6;
+const VECTOR_CLUSTER_GAP = 12;
+const VECTOR_MAX_PAGE_FRACTION = 0.9;
+const RULE_THIN = 2;
+const RULE_LONG = 72;
 
 // Pair each caption with the nearest image region directly above it, sharing horizontal span.
 export function matchFigures(regions, captions) {
@@ -62,6 +68,111 @@ export function imageRegionsFromOps(fnArray, argsArray, ops) {
   return regions;
 }
 
+// Vector-drawn figures/tables leave no image-paint op; cluster their fill/stroke marks
+// (excluding long thin rules) into snapshot regions in PDF user space.
+export function vectorRegionsFromOps(fnArray, argsArray, ops, view) {
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  let pending = null;
+  const marks = [];
+  const extend = (minMax) => {
+    if (!minMax) return;
+    const [mnx, mny, mxx, mxy] = minMax;
+    const xs = [];
+    const ys = [];
+    for (const [px, py] of [
+      [mnx, mny],
+      [mxx, mny],
+      [mxx, mxy],
+      [mnx, mxy],
+    ]) {
+      xs.push(ctm[0] * px + ctm[2] * py + ctm[4]);
+      ys.push(ctm[1] * px + ctm[3] * py + ctm[5]);
+    }
+    const box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    pending = pending ? unionBox(pending, box) : box;
+  };
+
+  for (let i = 0; i < fnArray.length; i++) {
+    const fn = fnArray[i];
+    if (fn === ops.save) {
+      stack.push(ctm.slice());
+    } else if (fn === ops.restore) {
+      ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+    } else if (fn === ops.transform) {
+      ctm = multiplyMatrix(ctm, argsArray[i]);
+    } else if (fn === ops.constructPath) {
+      extend(argsArray[i]?.[2]);
+    } else if (ops.paint.has(fn)) {
+      if (pending) marks.push(pending);
+      pending = null;
+    } else if (fn === ops.endPath) {
+      pending = null;
+    }
+  }
+
+  const solid = marks.filter((m) => {
+    const w = m.x1 - m.x0;
+    const h = m.y1 - m.y0;
+    return !(Math.min(w, h) < RULE_THIN && Math.max(w, h) > RULE_LONG);
+  });
+  const pageArea = view ? (view[2] - view[0]) * (view[3] - view[1]) : Infinity;
+  return clusterBoxes(solid, VECTOR_CLUSTER_GAP)
+    .filter((c) => {
+      const w = c.x1 - c.x0;
+      const h = c.y1 - c.y0;
+      return (
+        w >= VECTOR_MIN_SIZE &&
+        h >= VECTOR_MIN_SIZE &&
+        c.count >= VECTOR_MIN_MARKS &&
+        w * h < VECTOR_MAX_PAGE_FRACTION * pageArea
+      );
+    })
+    .map((c) => ({ bbox: { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 }, yTop: c.y1, yBottom: c.y0 }));
+}
+
+function unionBox(a, b) {
+  return {
+    x0: Math.min(a.x0, b.x0),
+    y0: Math.min(a.y0, b.y0),
+    x1: Math.max(a.x1, b.x1),
+    y1: Math.max(a.y1, b.y1),
+  };
+}
+
+function clusterBoxes(boxes, gap) {
+  const parent = boxes.map((_, i) => i);
+  const find = (x) => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  const near = (a, b) =>
+    a.x0 - gap <= b.x1 && b.x0 - gap <= a.x1 && a.y0 - gap <= b.y1 && b.y0 - gap <= a.y1;
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      if (near(boxes[i], boxes[j])) parent[find(i)] = find(j);
+    }
+  }
+  const groups = new Map();
+  for (let i = 0; i < boxes.length; i++) {
+    const root = find(i);
+    const g = groups.get(root);
+    if (g) {
+      g.x0 = Math.min(g.x0, boxes[i].x0);
+      g.y0 = Math.min(g.y0, boxes[i].y0);
+      g.x1 = Math.max(g.x1, boxes[i].x1);
+      g.y1 = Math.max(g.y1, boxes[i].y1);
+      g.count++;
+    } else {
+      groups.set(root, { x0: boxes[i].x0, y0: boxes[i].y0, x1: boxes[i].x1, y1: boxes[i].y1, count: 1 });
+    }
+  }
+  return [...groups.values()];
+}
+
 function multiplyMatrix(m, n) {
   return [
     m[0] * n[0] + m[2] * n[1],
@@ -88,10 +199,9 @@ export function placeImageSegments(pageSegs, regions) {
         continue;
       }
       const inColumn = seg.some((l) => l.x0 <= cx && cx <= (l.endX ?? l.x0));
-      const maxY = Math.max(...seg.map((l) => l.y));
       const minY = Math.min(...seg.map((l) => l.y));
-      const spans = region.yBottom <= maxY + 2 && region.yTop >= minY - 2;
-      if (inColumn && spans) {
+      const reachesInto = region.yBottom >= minY - 2;
+      if (inColumn && reachesInto) {
         const above = seg.filter((l) => l.y > midY);
         const below = seg.filter((l) => l.y <= midY);
         if (above.length) next.push(above);

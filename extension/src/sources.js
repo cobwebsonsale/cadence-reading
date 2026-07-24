@@ -22,7 +22,7 @@ function docsSource(docId) {
 
       const [doc, rawComments, exportText] = await Promise.all([
         fetchDoc(docId),
-        fetchComments(docId, session.settings.showResolvedComments).catch((error) => {
+        fetchComments(docId, false).catch((error) => {
           console.warn('[cadence] comments fetch failed:', error);
           return [];
         }),
@@ -72,7 +72,7 @@ async function loadExtractBuild(session, bytes) {
     { loadPdf },
     { extractBlocks },
     { buildBlock },
-    { extractRegions, createRasterizer },
+    { extractRegions, extractVectorRegions, createRasterizer },
     { buildEncodingMap },
   ] = await Promise.all([
     import('./pdf/loader.js'),
@@ -90,7 +90,8 @@ async function loadExtractBuild(session, bytes) {
     pdf,
     (done, total) => hud.setStatus(`Extracting text ${done}/${total}…`),
     extractRegions,
-    glyphMap
+    glyphMap,
+    extractVectorRegions
   );
 
   if (!hasText) {
@@ -99,9 +100,6 @@ async function loadExtractBuild(session, bytes) {
 
   // Build the DOM lazily and rasterize each page's figures only as its block is built.
   const rasterizer = createRasterizer(pdf);
-  if (session.settings.fontFamily) {
-    session.overlay.content.style.fontFamily = session.settings.fontFamily;
-  }
   session.setupLazyBuild({
     blocks,
     buildBlock: (block, index) => buildBlock(block, index, rasterizer),

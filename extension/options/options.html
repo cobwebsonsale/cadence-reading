@@ -109,11 +109,32 @@
       .switch input:checked + .track::before { transform: translateX(18px); }
       .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-      /* speed slider */
+      /* range slider */
       .speed { display: flex; align-items: center; gap: 12px; }
       .speed input[type="range"] { width: 200px; accent-color: var(--accent); }
       .speed .val { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
       .speed .unit { color: var(--dim); font-size: 12px; }
+
+      /* color swatch */
+      .color { display: flex; align-items: center; gap: 10px; }
+      .color input[type="color"] {
+        width: 40px; height: 30px; padding: 2px; cursor: pointer;
+        border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+      }
+      .color .val { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; text-transform: uppercase; }
+
+      /* live preview */
+      .preview-paper {
+        border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 28px 34px; margin-bottom: 4px;
+        font-family: Georgia, "Iowan Old Style", Charter, Cambria, serif;
+        font-size: 14pt;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+      .preview-paper h2 { font-size: 1.5em; font-weight: 700; line-height: 1.2; margin: 0 0 0.3em; }
+      .preview-paper p { margin: 0 0 0.85em; }
+      .preview-paper p:last-child { margin-bottom: 0; }
 
       input[type="text"] {
         padding: 7px 10px; width: 220px; font-size: 13px;
@@ -194,13 +215,35 @@
 
       <div class="setting">
         <div class="setting-label">
-          <label>Pause at</label>
-          <div class="hint">Where reading waits for a keypress</div>
+          <label for="focusMode">Focus mode</label>
+          <div class="hint">Dim already-read text (toggle with F)</div>
         </div>
-        <div class="segmented setting-control" role="radiogroup" aria-label="Pause at">
-          <label><input type="radio" name="pauseAt" value="paragraph" /><span>Every paragraph</span></label>
-          <label><input type="radio" name="pauseAt" value="section" /><span>Section breaks</span></label>
+        <label class="switch">
+          <input type="checkbox" id="focusMode" />
+          <span class="track"></span>
+        </label>
+      </div>
+
+      <div class="setting">
+        <div class="setting-label">
+          <label for="bionicMode">Bionic reading</label>
+          <div class="hint">Embolden the start of each word (toggle with B)</div>
         </div>
+        <label class="switch">
+          <input type="checkbox" id="bionicMode" />
+          <span class="track"></span>
+        </label>
+      </div>
+
+      <div class="setting">
+        <div class="setting-label">
+          <label for="commentsVisible">Comments</label>
+          <div class="hint">Show comment callouts by default (toggle with C)</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="commentsVisible" />
+          <span class="track"></span>
+        </label>
       </div>
     </div>
 
@@ -225,14 +268,55 @@
 
       <div class="setting">
         <div class="setting-label">
-          <label for="showResolvedComments">Show resolved comments</label>
-          <div class="hint">Include comments marked resolved</div>
+          <label for="contentWidth">Line width</label>
+          <div class="hint">Width of the reading column</div>
         </div>
-        <label class="switch">
-          <input type="checkbox" id="showResolvedComments" />
-          <span class="track"></span>
-        </label>
+        <div class="setting-control speed">
+          <input type="range" id="contentWidth" min="520" max="1100" step="20" />
+          <span class="val" id="contentWidthVal">900</span>
+          <span class="unit">px</span>
+        </div>
       </div>
+
+      <div class="setting">
+        <div class="setting-label">
+          <label for="lineHeight">Line height</label>
+          <div class="hint">Space between wrapped lines</div>
+        </div>
+        <div class="setting-control speed">
+          <input type="range" id="lineHeight" min="1.2" max="2.2" step="0.05" />
+          <span class="val" id="lineHeightVal">1.65</span>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting-label">
+          <label for="paperBg">Background colour</label>
+          <div class="hint" id="paperBgHint">The reading surface</div>
+        </div>
+        <div class="setting-control color">
+          <span class="val" id="paperBgVal"></span>
+          <input type="color" id="paperBg" />
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting-label">
+          <label for="paperFg">Text colour</label>
+          <div class="hint" id="paperFgHint">The ink</div>
+        </div>
+        <div class="setting-control color">
+          <span class="val" id="paperFgVal"></span>
+          <input type="color" id="paperFg" />
+        </div>
+      </div>
+    </div>
+
+    <h1>Preview</h1>
+    <div class="preview-paper" id="previewPaper">
+      <h2>The Reading Room</h2>
+      <p>Type is a voice you hear with your eyes. Set it well and the reader forgets the page entirely, carried from line to line without a snag, the way a good conversation carries a listener from thought to thought.</p>
+      <p>Adjust the controls above and watch this passage settle into the shape that reads easiest for you.</p>
     </div>
 
     <div id="status"></div>

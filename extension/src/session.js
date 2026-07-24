@@ -6,7 +6,7 @@ import { createLoop } from './reveal/loop.js';
 import { attachInput } from './reveal/input.js';
 import { detectSource } from './sources.js';
 import { createNotesPanel } from './notes/panel.js';
-import { notesKey, loadPosition, savePosition } from './notes/storage.js';
+import { notesKey, loadPosition, savePosition, saveDocEntry } from './notes/storage.js';
 
 let activeSession = null;
 
@@ -23,7 +23,8 @@ export async function startSession() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => savePosition(href, index), 400);
   };
-  return startSessionWithSource(source, { startIndex, onPosition });
+  const onPrepared = (title) => saveDocEntry(href, { title, type: source.type });
+  return startSessionWithSource(source, { startIndex, onPosition, onPrepared });
 }
 
 export async function startSessionWithSource(source, opts = {}) {
@@ -52,8 +53,9 @@ class Session {
     this.detachInput = null;
     this.unsubscribeSettings = null;
     this.comments = null;
-    this.commentsHidden = true;
-    this.focusEnabled = true;
+    this.commentsHidden = !this.settings.commentsVisible;
+    this.focusEnabled = this.settings.focusMode;
+    this.bionicEnabled = this.settings.bionicMode;
     this.notes = null;
     this.pageState = capturePageState();
     this.ended = false;
@@ -89,6 +91,7 @@ class Session {
 
   async run() {
     this.overlay = createOverlay({ theme: this.settings.theme });
+    this.applyReaderStyle();
     this.overlay.hud.setStatus('Loading…');
     this.overlay.hud.setSpeed(this.settings.charsPerSec);
     this.overlay.content.style.visibility = 'hidden';
@@ -141,6 +144,9 @@ class Session {
 
     this.loop.setFocus(this.focusEnabled);
     this.overlay.hud.setToggle('focus', this.focusEnabled);
+
+    this.overlay.root.classList.toggle('dr-bionic', this.bionicEnabled);
+    this.overlay.hud.setToggle('bionic', this.bionicEnabled);
 
     this.overlay.hud.setStatus('');
     this.overlay.content.style.visibility = '';
@@ -249,6 +255,18 @@ class Session {
     }
   }
 
+  applyReaderStyle() {
+    if (!this.overlay) return;
+    const { root, content } = this.overlay;
+    const { lineHeight, contentWidth, paperBg, paperFg, fontFamily } = this.settings;
+    root.style.setProperty('--dr-reader-leading', lineHeight);
+    root.style.setProperty('--dr-content-width', `${contentWidth}px`);
+    const dark = resolveTheme(this.settings.theme) === 'dark';
+    root.style.setProperty('--dr-paper-bg', dark ? this.settings.paperBgDark : paperBg);
+    root.style.setProperty('--dr-paper-fg', dark ? this.settings.paperFgDark : paperFg);
+    content.style.fontFamily = fontFamily || '';
+  }
+
   applySettings(patch) {
     Object.assign(this.settings, patch);
     if ('charsPerSec' in patch && this.loop) {
@@ -257,6 +275,8 @@ class Session {
     if ('theme' in patch && this.overlay) {
       this.overlay.root.setAttribute('data-theme', resolveTheme(patch.theme));
     }
+    const styleKeys = ['lineHeight', 'contentWidth', 'paperBg', 'paperFg', 'fontFamily', 'theme'];
+    if (styleKeys.some((k) => k in patch)) this.applyReaderStyle();
   }
 
   toggleComments() {

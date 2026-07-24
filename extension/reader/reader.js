@@ -3,6 +3,7 @@ import { localPdfSource, detectSource } from '../src/sources.js';
 import { loadPosition, savePosition, saveDocEntry, listDocEntries, deleteDocEntry, positionKey } from '../src/notes/storage.js';
 import { listDriveFiles } from '../src/rpc.js';
 import * as persist from './persist.js';
+import { handlesSupported, saveHandle, loadHandle, deleteHandle, ensureReadPermission } from './handles.js';
 
 const dropZone = document.getElementById('drop');
 const fileInput = document.getElementById('file');
@@ -21,8 +22,11 @@ const driveList = document.getElementById('drive-list');
 let activePosKey = null;
 let positionCleared = false;
 
+let errorTimer = 0;
 function setError(message) {
   errorEl.textContent = message || '';
+  clearTimeout(errorTimer);
+  if (message) errorTimer = setTimeout(() => (errorEl.textContent = ''), 6000);
 }
 
 function setLoading(name) {
@@ -42,7 +46,7 @@ function runSession(bytes, name, startIndex) {
   return startSessionWithSource(localPdfSource(bytes, name), { startIndex, onPosition, onPrepared });
 }
 
-async function openFile(file) {
+async function openFile(file, handle) {
   setError('');
   if (!file) return;
 
@@ -56,12 +60,51 @@ async function openFile(file) {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     persist.saveDoc({ name: file.name, bytes });
+    if (handle) await saveHandle(localPdfHref(file.name), handle);
     await runSession(bytes, file.name, await loadPosition(localPdfHref(file.name)));
   } catch (error) {
     setLoading(null);
     console.error('[cadence] failed to open local PDF:', error);
     setError(`Couldn’t open this PDF: ${error?.message || error}`);
   }
+}
+
+// Re-open a local PDF from a stored file handle: re-check read permission, re-read from disk.
+async function reopenLocal(entry) {
+  setError('');
+  const handle = await loadHandle(entry.id);
+  if (!handle) {
+    setError('Open this PDF once more to relink it, then it’ll reopen from here.');
+    return;
+  }
+  try {
+    if (!(await ensureReadPermission(handle))) {
+      setError('Reading this PDF needs permission — click again to allow.');
+      return;
+    }
+    const file = await handle.getFile();
+    await openFile(file, handle);
+  } catch (error) {
+    console.error('[cadence] failed to reopen local PDF:', error);
+    setError('Couldn’t reopen this PDF — it may have moved or been deleted.');
+  }
+}
+
+async function chooseFile() {
+  if (!('showOpenFilePicker' in window)) {
+    fileInput.click();
+    return;
+  }
+  let handle;
+  try {
+    [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
+      multiple: false,
+    });
+  } catch {
+    return;
+  }
+  openFile(await handle.getFile(), handle);
 }
 
 // Open a Google Doc / Drive PDF by pasted link, keying reveal position by the URL.
@@ -155,12 +198,13 @@ async function renderLibrary() {
 
     row.addEventListener('click', (e) => {
       if (e.target.closest('.library-del')) return;
-      if (local) setError('Drop this PDF again to reopen it.');
+      if (local) reopenLocal(entry);
       else openUrl(entry.id);
     });
     row.querySelector('.library-del').addEventListener('click', async (e) => {
       e.stopPropagation();
       await deleteDocEntry(entry.id);
+      if (local) await deleteHandle(entry.id);
       renderLibrary();
     });
     libraryListEl.appendChild(row);
@@ -189,7 +233,9 @@ fileInput.addEventListener('click', () => {
 });
 
 dropZone.addEventListener('click', (e) => {
-  if (e.target.tagName !== 'LABEL') fileInput.click();
+  if (dropZone.classList.contains('loading')) return;
+  e.preventDefault();
+  chooseFile();
 });
 
 for (const eventName of ['dragenter', 'dragover']) {
@@ -201,10 +247,21 @@ for (const eventName of ['dragenter', 'dragover']) {
 for (const eventName of ['dragleave', 'dragend']) {
   dropZone.addEventListener(eventName, () => dropZone.classList.remove('over'));
 }
-dropZone.addEventListener('drop', (e) => {
+dropZone.addEventListener('drop', async (e) => {
   e.preventDefault();
   dropZone.classList.remove('over');
-  openFile(e.dataTransfer?.files?.[0]);
+  const fallbackFile = e.dataTransfer?.files?.[0];
+  const item = e.dataTransfer?.items?.[0];
+  const handlePromise =
+    handlesSupported() && item && 'getAsFileSystemHandle' in item ? item.getAsFileSystemHandle() : null;
+  let handle = null;
+  try {
+    handle = handlePromise ? await handlePromise : null;
+  } catch {
+    handle = null;
+  }
+  if (handle && handle.kind !== 'file') handle = null;
+  openFile(handle ? await handle.getFile() : fallbackFile, handle);
 });
 
 window.addEventListener('dragover', (e) => e.preventDefault());

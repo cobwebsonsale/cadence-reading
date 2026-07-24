@@ -15,7 +15,7 @@ import { rotatedTableRegion, equationRegions, uprightTableRegion } from './regio
 
 export { composeDiacritics } from './diacritics.js';
 export { remapControlChars, itemGlyphImage } from './glyphs.js';
-export { matchFigures, imageRegionsFromOps, placeImageSegments } from './figures-layout.js';
+export { matchFigures, imageRegionsFromOps, vectorRegionsFromOps, placeImageSegments } from './figures-layout.js';
 export { rotatedTableRegion, equationRegions, uprightTableRegion } from './regions.js';
 
 const SPACE_GAP_RATIO = 0.3;
@@ -40,7 +40,13 @@ const SENTENCE_FINISHED_RE = /[.!?]['")\]”’]?$/;
 const FIG_CAPTION_RE = /^\s*fig(?:ure)?\.?\s*(\d+)/i;
 
 // extractRegions/glyphMap are injected (figures.js, encodings.js) so this module stays PDF.js-free.
-export async function extractBlocks(pdf, onProgress, extractRegions = null, glyphMap = null) {
+export async function extractBlocks(
+  pdf,
+  onProgress,
+  extractRegions = null,
+  glyphMap = null,
+  extractVectorRegions = null
+) {
   const pageCount = pdf.numPages;
   const styleCache = new Map();
   const baseFontCache = new Map();
@@ -49,19 +55,23 @@ export async function extractBlocks(pdf, onProgress, extractRegions = null, glyp
   const pageHeights = [];
   const pageWidths = [];
   const pageRegions = [];
+  const pageVectors = [];
   const pageTables = [];
   const pageUprightTables = [];
   const pageEquations = [];
   for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
     const page = await pdf.getPage(pageNum);
     let regions = [];
+    let vectors = [];
     try {
       const operatorList = await page.getOperatorList();
       if (extractRegions) regions = extractRegions(operatorList) || [];
+      if (extractVectorRegions) vectors = extractVectorRegions(operatorList, page.view) || [];
     } catch {
       void 0;
     }
     pageRegions.push(regions);
+    pageVectors.push(vectors);
     const content = await page.getTextContent();
     pageLines.push(
       buildLines(content.items, page, content.styles, styleCache, glyphMap, baseFontCache, pageNum)
@@ -119,6 +129,35 @@ export async function extractBlocks(pdf, onProgress, extractRegions = null, glyp
       );
     }
 
+    const pageArea = pageWidths[p] * pageHeights[p];
+    for (const region of pageRegions[p]) {
+      const coversPage = (region.x1 - region.x0) * (region.y1 - region.y0) >= 0.9 * pageArea;
+      if (coversPage) continue;
+      rawLines = rawLines.filter(
+        (line) =>
+          line.y < region.y0 - 1 ||
+          line.y > region.y1 + 1 ||
+          (line.x0 ?? 0) < region.x0 - 4 ||
+          (line.x0 ?? 0) > region.x1
+      );
+    }
+
+    const covered = [
+      ...(uprightTable ? [uprightTable.bbox] : []),
+      ...equations.map((eq) => eq.bbox),
+      ...pageRegions[p],
+    ];
+    const vectors = pageVectors[p].filter((v) => !covered.some((box) => boxMostlyInside(v.bbox, box)));
+    for (const v of vectors) {
+      rawLines = rawLines.filter(
+        (line) =>
+          line.y < v.yBottom - 1 ||
+          line.y > v.yTop + 1 ||
+          (line.x0 ?? 0) < v.bbox.x0 - 4 ||
+          (line.x0 ?? 0) > v.bbox.x1
+      );
+    }
+
     const partition = partitionFootnotes(
       rawLines,
       bodyFontSize(rawLines),
@@ -144,6 +183,9 @@ export async function extractBlocks(pdf, onProgress, extractRegions = null, glyp
     const inlineRegions = [];
     for (const eq of equations) {
       inlineRegions.push({ page: p + 1, bbox: eq.bbox, yTop: eq.yTop, yBottom: eq.yBottom });
+    }
+    for (const v of vectors) {
+      inlineRegions.push({ page: p + 1, bbox: v.bbox, yTop: v.yTop, yBottom: v.yBottom });
     }
     if (uprightTable) {
       inlineRegions.push({
@@ -659,13 +701,33 @@ function trailingSmallFontStart(column) {
   return column.length - i >= TRAILING_SMALL_MIN ? i : column.length;
 }
 
+function boxMostlyInside(inner, outer) {
+  const ix = Math.min(inner.x1, outer.x1) - Math.max(inner.x0, outer.x0);
+  const iy = Math.min(inner.y1, outer.y1) - Math.max(inner.y0, outer.y0);
+  if (ix <= 0 || iy <= 0) return false;
+  const innerArea = (inner.x1 - inner.x0) * (inner.y1 - inner.y0);
+  return innerArea > 0 && ix * iy > 0.5 * innerArea;
+}
+
+function bodyLeftEdge(lines) {
+  const counts = new Map();
+  for (const line of lines) {
+    const x = Math.round(line.x0 ?? 0);
+    counts.set(x, (counts.get(x) || 0) + 1);
+  }
+  let edge = Infinity;
+  for (const [x, count] of counts) if (count >= 2 && x < edge) edge = x;
+  return Number.isFinite(edge) ? edge : Math.min(...lines.map((line) => line.x0 ?? 0));
+}
+
 export function groupParagraphs(lines) {
   if (!lines.length) return [];
 
   const gaps = [];
   for (let i = 1; i < lines.length; i++) gaps.push(Math.abs(lines[i - 1].y - lines[i].y));
   const medianGap = median(gaps) || lines[0].fontSize * 1.2;
-  const baseLeft = Math.min(...lines.map((line) => line.x0 ?? 0));
+  const bodyFs = bodyFontSize(lines);
+  const baseLeft = bodyLeftEdge(lines);
   // A list hang-indents continuations, so its markers (not indent) delimit items.
   const isList = lines.filter((line) => LIST_ITEM_RE.test(runsText(line.runs))).length >= 2;
 
@@ -685,11 +747,14 @@ export function groupParagraphs(lines) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (i > 0) {
-      const gap = Math.abs(lines[i - 1].y - line.y);
+      const prev = lines[i - 1];
+      const gap = Math.abs(prev.y - line.y);
+      const lineFs = line.fontSize || bodyFs;
+      const pitch = medianGap * Math.max(1, lineFs / bodyFs);
       const startsListItem = LIST_ITEM_RE.test(runsText(line.runs));
       const indented = !isList && (line.x0 ?? baseLeft) - baseLeft > INDENT_RATIO * (line.fontSize || 10);
       const newRow = gap >= INDENT_GAP_RATIO * medianGap;
-      if (gap > PARA_GAP_RATIO * medianGap || startsListItem || (indented && newRow)) flush();
+      if (gap > PARA_GAP_RATIO * pitch || startsListItem || (indented && newRow)) flush();
     }
     if (!paragraph) {
       paragraph = { runs: [], lastLineEndX: 0 };
