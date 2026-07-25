@@ -58,6 +58,22 @@ export function createOverlay({ theme }) {
   const tabMenu = el('div', 'dr-hud-tabs-menu');
   tabPicker.append(tabBtn, tabMenu);
 
+  const onTabDocClick = (e) => {
+    if (!tabPicker.contains(e.target)) closeTabMenu();
+  };
+  const closeTabMenu = () => {
+    tabPicker.classList.remove('dr-open');
+    document.removeEventListener('click', onTabDocClick);
+  };
+  tabBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (tabPicker.classList.toggle('dr-open')) {
+      document.addEventListener('click', onTabDocClick);
+    } else {
+      document.removeEventListener('click', onTabDocClick);
+    }
+  });
+
   hudEl.append(tabPicker, hudStatus, hudSpeed, flags, help);
 
   root.append(stage, hudEl);
@@ -91,7 +107,10 @@ export function createOverlay({ theme }) {
         item.textContent = tab.title || 'Untitled tab';
         item.style.paddingLeft = `${12 + tab.level * 14}px`;
         item.classList.toggle('dr-hud-tab-current', tab.tabId === current.tabId);
-        item.addEventListener('click', () => onSelect(tab.tabId));
+        item.addEventListener('click', () => {
+          closeTabMenu();
+          onSelect(tab.tabId);
+        });
         tabMenu.appendChild(item);
       }
       tabPicker.style.display = '';

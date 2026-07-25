@@ -29,4 +29,6 @@ export const fetchDocText = (docId) => call({ type: 'fetchDocText', docId });
 
 export const fetchPdfBytes = (fileId) => call({ type: 'fetchPdfBytes', fileId });
 
+export const fetchFileName = (fileId) => call({ type: 'fetchFileName', fileId });
+
 export const getAuthToken = () => call({ type: 'getAuthToken' });

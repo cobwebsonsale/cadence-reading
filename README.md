@@ -11,21 +11,24 @@ Implements [`plan-rerender-with-comments-reader.md`](./plan-rerender-with-commen
 
 ## Sources
 
-- **Google Docs** — `docs.google.com/document/d/{id}` (full formatting + comments). OAuth.
-- **Drive PDFs** — `drive.google.com/file/d/{id}/view` (no comments). OAuth. See [`plan-pdf-reader.md`](./plan-pdf-reader.md).
-- **Local PDFs** — drag/drop or pick a file in the reader page. In-browser only: **no upload, no OAuth.**
+- **Google Docs** — full formatting + comments + multi-tab docs.
+- **Drive PDFs** — no comments. See [`plan-pdf-reader.md`](./plan-pdf-reader.md).
+- **Local PDFs** — drag/drop or pick a file. In-browser only: **no upload, no OAuth.**
 
-Docs/Drive are detected by tab URL; the local reader opens from the toolbar icon
-on any other page. All sources build the same `.dr-char` / `.dr-para` DOM and
-feed the shared reveal machinery. The reader landing page also lets you **paste a
-link, drop a PDF, or browse your Google Drive** (a native file list via the Drive API —
-Docs + PDFs, searchable), and lists recently-opened documents (title, note count, last
-read) to resume or forget.
+Google files open through the **Google Picker** under the non-sensitive `drive.file`
+scope — the app only ever touches files you explicitly pick. Clicking the toolbar icon on
+a Google Doc opens the reader with that doc's title primed in the Picker search; a
+file you've opened before re-opens straight from **Recent** with no Picker (the grant
+persists). The landing page also lets you **open from Google Drive** or **drop a PDF**,
+and lists recently-opened documents (title, note count, last read) to resume or forget.
+All sources build the same `.dr-char` / `.dr-para` DOM and feed the shared reveal
+machinery. See [`plan-drive-file-picker.md`](./plan-drive-file-picker.md).
 
 ## Fidelity
 
-The reader imposes its own typography (font, size, line height) but borrows the
-author's *structure* from the document's visual layout, not from assumed conventions:
+The reader imposes its own typography (configurable font, width, line height, and paper
+colours) but borrows the author's *structure* from the document's visual layout, not from
+assumed conventions:
 
 - **Chunking** follows visual gaps: a blank line or real paragraph spacing pauses; a
   tight run (metadata, list items Google renders flush) reveals as one unit. Long
@@ -37,6 +40,8 @@ author's *structure* from the document's visual layout, not from assumed convent
   as Google renders it.
 - **Tables** — the author's column widths (or even distribution), scrolling horizontally
   when wider than the paper.
+- **Tabs** — a multi-tab Doc reads one tab at a time; a switcher in the HUD lists them,
+  and each tab keeps its own reading position and notes.
 
 ## Layout
 
@@ -45,20 +50,21 @@ extension/
   manifest.json
   vendor/pdfjs/          vendored PDF.js ESM build (pdf.mjs + worker)
   src/
-    background.js        OAuth + Docs/Drive/PDF fetch RPC; toolbar trigger
-    content.js           thin bootstrap; lazily imports session.js
+    background.js        OAuth (drive.file) + fetch RPC + Picker token; toolbar opens the reader
     session.js           orchestrates a reading session
     sources.js           source detection + Docs / Drive-PDF / local-PDF strategies
+    gdocs.js             Google-file URL parse/synthesis + title cleanup (pure)
     rpc.js               promise wrapper over chrome.runtime messaging
     settings.js          chrome.storage.sync settings + defaults
-    overlay.js           builds overlay chrome (content column, gutter, HUD); theme
+    overlay.js           overlay chrome (content column, gutter, HUD + tab switcher); theme
     dom.js               shared el() DOM-element helper
     bytes.js             base64 <-> Uint8Array
-    api/docs.js          documents.get
-    api/drive.js         comments.list (paged)
+    api/docs.js          documents.get (with tab content)
+    api/drive.js         comments.list (paged) + text export + files.get name
     api/pdf.js           Drive media fetch -> base64
     api/http.js          shared fetch helper (safeText)
     render/builder.js    Docs JSON -> overlay DOM; borrows the author's spacing/headings/indents
+    render/tabs-model.js Docs tabs -> the selected tab's content (pure)
     render/styles.js     textStyle/paragraphStyle -> inline CSS
     render/lists.js      bullet vs numbered glyph + numbering
     render/tables.js     <table> rendering; borrows the doc's column widths
@@ -86,31 +92,46 @@ extension/
     reveal/scroller.js   how the view follows the text
     reveal/focus.js      focus-mode dimming
     reveal/input.js      keyboard controls
-  reader/                local-PDF drop-zone page (no auth)
+  reader/                landing page: Drive Picker + PDF drop-zone + recents
+    picker.js            popup handshake with the hosted Google Picker page
+    handles.js           File System Access handles to re-open local PDFs (IndexedDB)
   styles/overlay.css
-  options/               settings page
+  options/               settings page (live preview)
+docs/                    hosted Google Picker page (GitHub Pages; not bundled)
 ```
 
 PDF.js (`vendor/pdfjs/`, pinned **4.10.38**, Apache-2.0) is vendored prebuilt, so
-there's no build step. Its worker loads from a web-accessible URL; on CSP block
-it falls back to main-thread parsing.
+there's no build step. Its worker loads from the extension; on CSP block it falls back to
+main-thread parsing.
 
-## OAuth setup (Docs / Drive only)
+The **Picker page** (`docs/`, served at `picker.bharatmunshi.cc` via GitHub Pages) is not
+part of the extension bundle — MV3 forbids the remote Picker script in extension pages, so
+the extension opens it in a popup and talks to it over `postMessage`. See
+[`docs/README.md`](./docs/README.md).
 
-`chrome.identity.getAuthToken` needs a Google Cloud OAuth client tied to the
-extension ID. Local PDFs work without any of this.
+## Google setup (Docs / Drive only)
+
+Local PDFs need none of this. Google files use `chrome.identity` (OAuth client, scope
+`drive.file` — **non-sensitive**, publishable without verification) plus the Google Picker.
 
 1. Load the unpacked extension to get its ID (or pin one via a `"key"` in `manifest.json`).
-2. In [Google Cloud Console](https://console.cloud.google.com/): enable the **Docs** and **Drive** APIs, configure the OAuth consent screen (add yourself as a test user), and create an **OAuth client ID** (type *Chrome App / Extension*) with that ID.
-3. Put the client ID in `manifest.json` → `oauth2.client_id`.
+2. In [Google Cloud Console](https://console.cloud.google.com/): enable the **Picker**,
+   **Docs**, and **Drive** APIs; create an **OAuth client** (Chrome-extension type) for that
+   ID with scope `drive.file`; create an **API key** restricted to the Picker API and
+   referrer-locked to the Picker origin.
+3. Put the client ID in `manifest.json` → `oauth2.client_id`; the API key + project number
+   in `docs/index.html`; and set `PICKER_ORIGIN` in `reader/picker.js` to the hosted origin.
+4. Host `docs/` (GitHub Pages).
 
-Scope `drive.readonly` covers both Docs reads and Drive comments; add
-`documents.readonly` if the Docs API rejects it.
+See [`plan-drive-file-picker.md`](./plan-drive-file-picker.md).
 
 ## Load it
 
 1. `chrome://extensions` → **Developer mode** → **Load unpacked** → the `extension/` dir.
-2. **Doc / Drive PDF**: open it, click the toolbar icon or press **Ctrl/Cmd+Shift+R** (needs OAuth).
+2. **Google Doc / Drive PDF**: on the doc, click the toolbar icon or press
+   **Ctrl/Cmd+Shift+R** — the reader opens with the doc's title primed; pick it from the
+   Picker. Or open the reader and click **Open from Google Drive**. Re-opening a past file
+   is one click from **Recent** (no Picker).
 3. **Local PDF**: click the toolbar icon on any other page, then drop/pick a PDF (no OAuth).
 
 ## Controls
@@ -124,11 +145,12 @@ Scope `drive.readonly` covers both Docs reads and Drive comments; add
 | `B` | Bionic reading (embolden word starts) |
 | `C` | Toggle comment callouts |
 | `[` / `]` | Slower / faster |
-| `Esc` | End session |
+| `Esc` | End session (back to the landing page) |
 
-`Cmd`/`Ctrl` shortcuts pass through (so `Cmd+F` / `Cmd+C` still work). Links —
-in the doc body, comments, or notes — open on `Cmd`/`Ctrl`+click; a plain click
-never navigates (it shows the comment, flashes the note card, or does nothing).
+Multi-tab Docs get a tab switcher at the left of the HUD. `Cmd`/`Ctrl` shortcuts pass
+through (so `Cmd+F` / `Cmd+C` still work). Links — in the doc body, comments, or notes —
+open on `Cmd`/`Ctrl`+click; a plain click never navigates (it shows the comment, flashes
+the note card, or does nothing).
 
 ## Notes & highlights
 
@@ -143,37 +165,46 @@ Editing/snipping/deleting are undoable (`Cmd/Ctrl+Z`, `+Shift+Z`); delete needs 
 confirming second click.
 
 Card↔doc links are **two-way**: click a card to scroll+flash its source; click a
-highlight to flash its card. Everything (cards, note text, caret) persists per URL
+highlight to flash its card. Everything (cards, note text, caret) persists per doc+tab
 in `chrome.storage.local`; highlights re-anchor by matching the stored quote on
 reload, including snippets that span several paragraphs or a list.
 
 ## Settings
 
-Options page, persisted to `chrome.storage.sync`: `charsPerSec` (default 150),
-`pauseAt`, `showResolvedComments`, `theme`, `fontFamily`. Changes apply live. A
-**Stored page data** section lists every page with saved data — notes, highlights,
-or just a reading position — and can delete one or clear all (with confirmation).
+Options page, persisted to `chrome.storage.sync`, applied live, with a live preview of the
+reading surface:
+
+- **Reveal** — `charsPerSec` (default 150); default state of **Focus**, **Bionic**, and
+  **Comments** (keys still toggle them per session).
+- **Appearance** — `theme` (auto/light/dark), a `fontFamily` override, line width, line
+  height, and paper background/text colours — a separate colour pair for light and dark.
+
+A **Stored page data** section lists every page with saved data — notes, highlights, or
+just a reading position — and can delete one or clear all (with confirmation).
 
 ## Reading position
 
-Reveal position resumes where you left off, saved continuously as you read (not only
-at pauses, so a reload mid-reveal doesn't lose progress):
+Reveal position resumes where you left off, saved continuously as you read (not only at
+pauses, so a reload mid-reveal doesn't lose progress), keyed per document **and tab**:
 
-- **Docs / Drive PDFs** — saved per URL in `chrome.storage.local`; persists across reloads, tabs, and reopens.
-- **Local PDFs** — saved by file name, so re-dropping the same file resumes. The file *bytes* live only in per-tab `sessionStorage` (a dropped file has no durable handle), so each tab is independent and you re-drop after closing it.
-
-> `sessionStorage`'s ~5 MB quota means a PDF over ~3.5 MB may not survive a
-> same-tab refresh (re-open it); the position itself is always saved.
+- **Docs / Drive PDFs** — saved per canonical file id in `chrome.storage.local`; persists
+  across reloads, tabs, and reopens. Re-fetching a picked file needs no re-pick (the
+  `drive.file` grant persists).
+- **Local PDFs** — saved by file name. On a supporting browser the file is remembered via a
+  **File System Access handle** (in IndexedDB), so a **Recent** re-opens it from disk after a
+  one-click permission grant; otherwise re-drop the file. Bytes for the current tab also
+  live in `sessionStorage` for same-tab reloads.
 
 ## Tests
 
 `npm test` runs `node --test` over `test/*.test.js` in jsdom — no build step.
 Coverage: reveal layer (`loop`/`walker`/`chunker`/`scroller`/`focus`/`input`), PDF
 pipeline (`extract`/`geometry`/`encodings`/`pdf-builder`), Docs render
-(`builder`/`styles`/`lists`), notes, comments + sanitizer, shared utils, and two
-e2e flows (full reveal chain; notes snip→persist→reload). Canvas/network/SW paths
-(`pdf/loader`, `pdf/figures`, `api/*`, `rpc`, `background`) are verified by loading
-a real document.
+(`builder`/`styles`/`lists`/`tabs-model`), Google-file helpers (`gdocs`/`sources`), notes,
+comments + sanitizer, settings, shared utils, and two e2e flows (full reveal chain; notes
+snip→persist→reload). Canvas/network/SW/Picker paths (`pdf/loader`, `pdf/figures`, `api/*`,
+`rpc`, `background`, `reader/picker`, `reader/handles`) are verified by loading a real
+document.
 
 ```
 npm install   # once — installs jsdom
@@ -183,7 +214,10 @@ npm test
 ## Known limitations
 
 - **Large docs.** One span per character. PDFs build lazily; a Doc builds its whole DOM up front, so ~50k-word docs create a lot at once.
-- The doc renders on a light "paper" card in any theme (keeps authored colors faithful); theme controls surrounding chrome.
+- **Google Picker** is required to open a *new* file — paste-a-link and browse-all-files are gone under `drive.file`; re-opening a picked file/tab is not. The Picker runs on a separately hosted page.
+- **Multi-tab Docs** open at the first tab (the Picker returns a file, not a tab); switch from the HUD. Comments anchor only within the shown tab.
+- **Re-opening a local PDF** from Recent needs the File System Access API (Chromium); elsewhere, re-drop it.
 - Comment anchoring is by quoted-text match; duplicates resolve in document order.
 - Equations/drawings (Docs) render as Google's flattened image; suggestions preview without markup.
 - **PDFs**: bold/italic, headings, multi-column order, head/foot stripping, footnotes, sub/superscripts, and unmapped-glyph recovery are handled; figures/equations/tables are snapshotted inline. Scanned (no text layer) PDFs are refused — no OCR. Reading order is heuristic.
+```

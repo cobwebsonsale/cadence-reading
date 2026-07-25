@@ -1,4 +1,4 @@
-import { fetchDoc, fetchComments, fetchDocText, fetchPdfBytes } from './rpc.js';
+import { fetchDoc, fetchComments, fetchDocText, fetchPdfBytes, fetchFileName } from './rpc.js';
 import { bytesFromBase64 } from './bytes.js';
 import { parseDocRef } from './gdocs.js';
 import { listTabs, resolveTabId, tabTitle } from './render/tabs-model.js';
@@ -55,7 +55,11 @@ function pdfSource(fileId) {
     type: 'pdf',
     async prepare(session) {
       session.overlay.hud.setStatus('Downloading PDF…');
-      const base64 = await fetchPdfBytes(fileId);
+      const [base64, name] = await Promise.all([
+        fetchPdfBytes(fileId),
+        fetchFileName(fileId).catch(() => ''),
+      ]);
+      session.docTitle = name || '';
       await loadExtractBuild(session, bytesFromBase64(base64));
       return new Map();
     },

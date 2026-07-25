@@ -2,6 +2,17 @@ import { safeText } from './http.js';
 
 const DRIVE_FILES = 'https://www.googleapis.com/drive/v3/files';
 
+export async function fetchFileName(fileId, token) {
+  const url = `${DRIVE_FILES}/${encodeURIComponent(fileId)}?fields=name&supportsAllDrives=true`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const error = new Error(`Drive files.get ${res.status}: ${await safeText(res)}`);
+    error.status = res.status;
+    throw error;
+  }
+  return (await res.json()).name || '';
+}
+
 const COMMENT_FIELDS =
   'comments(id,content,htmlContent,author(displayName,photoLink),' +
   'createdTime,resolved,anchor,quotedFileContent(value),' +

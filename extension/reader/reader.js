@@ -1,10 +1,20 @@
 import { startSessionWithSource } from '../src/session.js';
 import { localPdfSource, detectSource } from '../src/sources.js';
-import { loadPosition, savePosition, saveDocEntry, listDocEntries, deleteDocEntry, positionKey } from '../src/notes/storage.js';
-import { parseDocRef, synthesizeUrl, DRIVE_DOC_MIME } from '../src/gdocs.js';
+import { loadPosition, savePosition, saveDocEntry, listDocEntries, deleteDocEntry, positionKey, DOC_PREFIX } from '../src/notes/storage.js';
+import { parseDocRef, synthesizeUrl, DRIVE_DOC_MIME, DRIVE_PDF_MIME } from '../src/gdocs.js';
 import * as persist from './persist.js';
 import { handlesSupported, saveHandle, loadHandle, deleteHandle, ensureReadPermission } from './handles.js';
 import { openPicker } from './picker.js';
+import { loadSettings, onSettingsChanged } from '../src/settings.js';
+
+async function applyPageTheme() {
+  const { theme } = await loadSettings();
+  document.documentElement.dataset.theme = theme;
+}
+applyPageTheme();
+onSettingsChanged((patch) => {
+  if ('theme' in patch) applyPageTheme();
+});
 
 const dropZone = document.getElementById('drop');
 const fileInput = document.getElementById('file');
@@ -14,6 +24,7 @@ const libraryEl = document.getElementById('library');
 const libraryListEl = document.getElementById('library-list');
 const driveOpenBtn = document.getElementById('drive-open');
 const driveOpenLabel = document.getElementById('drive-open-label');
+const driveHint = document.getElementById('drive-hint');
 
 let activePosKey = null;
 let positionCleared = false;
@@ -39,7 +50,12 @@ function runSession(bytes, name, startIndex) {
   positionCleared = false;
   const onPosition = (index, done) => { if (!positionCleared) savePosition(href, done ? 0 : index); };
   const onPrepared = (title) => saveDocEntry(href, { title: title || name, type: 'localpdf' });
-  return startSessionWithSource(localPdfSource(bytes, name), { startIndex, onPosition, onPrepared });
+  return startSessionWithSource(localPdfSource(bytes, name), {
+    startIndex,
+    onPosition,
+    onPrepared,
+    onEnd: returnToLanding,
+  });
 }
 
 async function openFile(file, handle) {
@@ -59,13 +75,13 @@ async function openFile(file, handle) {
     if (handle) await saveHandle(localPdfHref(file.name), handle);
     await runSession(bytes, file.name, await loadPosition(localPdfHref(file.name)));
   } catch (error) {
-    setLoading(null);
     console.error('[cadence] failed to open local PDF:', error);
     setError(`Couldn’t open this PDF: ${error?.message || error}`);
+  } finally {
+    setLoading(null);
   }
 }
 
-// Re-open a local PDF from a stored file handle: re-check read permission, re-read from disk.
 async function reopenLocal(entry) {
   setError('');
   const handle = await loadHandle(entry.id);
@@ -103,11 +119,14 @@ async function chooseFile() {
   openFile(await handle.getFile(), handle);
 }
 
-// Open a Google Doc / Drive PDF by its (synthesized) URL, keying reveal position by it.
 async function openUrl(rawUrl) {
   setError('');
-  const url = (rawUrl || '').trim();
-  if (!url) return;
+  const raw = (rawUrl || '').trim();
+  if (!raw) return;
+
+  const ref = parseDocRef(raw);
+  const mime = ref && ref.kind === 'pdf' ? DRIVE_PDF_MIME : DRIVE_DOC_MIME;
+  const url = ref ? synthesizeUrl(ref.fileId, mime, ref.tabId) : raw;
 
   const source = detectSource(url);
   if (!source) {
@@ -115,52 +134,79 @@ async function openUrl(rawUrl) {
     return;
   }
 
-  // Reflect the opened doc in the page URL so a reload re-opens the same document + tab.
-  const params = new URLSearchParams(location.search);
-  if (params.get('url') !== url) {
-    params.set('url', url);
-    params.delete('q');
-    params.delete('tab');
-    history.replaceState(null, '', `${location.pathname}?${params}`);
-  }
+  reflectUrl(url);
 
-  const ref = parseDocRef(url);
+  let docUrl = url;
+  activePosKey = positionKey(url);
+  positionCleared = false;
+
+  const onPosition = (index, done) => { if (!positionCleared) savePosition(docUrl, done ? 0 : index); };
   const onSwitchTab = ref?.kind === 'doc' ? (tabId) => goToDocTab(ref.fileId, tabId) : null;
+
+  const onResolved = ({ keyTabId, title }) => {
+    if (!ref) return 0;
+    const canonical = synthesizeUrl(ref.fileId, mime, keyTabId);
+    docUrl = canonical;
+    activePosKey = positionKey(canonical);
+    reflectUrl(canonical);
+    saveDocEntry(canonical, { title, type: source.type });
+    return loadPosition(canonical);
+  };
 
   setLoading(source.type === 'docs' ? 'document' : 'PDF');
   try {
-    activePosKey = positionKey(url);
-    positionCleared = false;
-    const onPosition = (index, done) => { if (!positionCleared) savePosition(url, done ? 0 : index); };
-    const onPrepared = (title) => saveDocEntry(url, { title, type: source.type });
     await startSessionWithSource(source, {
-      startIndex: await loadPosition(url),
+      startIndex: 0,
       onPosition,
-      onPrepared,
+      onResolved,
       onSwitchTab,
+      onEnd: returnToLanding,
     });
   } catch (error) {
-    setLoading(null);
     console.error('[cadence] failed to open document:', error);
     if (error?.status === 403 || error?.status === 404) {
       setError('Access to this document was lost — use “Open from Google Drive” to grant it again.');
     } else {
       setError(`Couldn’t open that document: ${error?.message || error}`);
     }
+  } finally {
+    setLoading(null);
   }
 }
 
-// A tab switch reloads the reader at the new tab URL, rerunning the fetch/build pipeline
-// so per-tab position and notes keys take effect.
+function reflectUrl(url) {
+  const params = new URLSearchParams(location.search);
+  if (params.get('url') === url) return;
+  params.set('url', url);
+  params.delete('q');
+  params.delete('tab');
+  history.replaceState(null, '', `${location.pathname}?${params}`);
+}
+
+function returnToLanding() {
+  activePosKey = null;
+  persist.clearDoc();
+  const params = new URLSearchParams(location.search);
+  if (params.has('url') || params.has('q') || params.has('tab')) {
+    params.delete('url');
+    params.delete('q');
+    params.delete('tab');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? `${location.pathname}?${qs}` : location.pathname);
+  }
+  renderLibrary();
+}
+
 function goToDocTab(fileId, tabId) {
   location.search = `?url=${encodeURIComponent(synthesizeUrl(fileId, DRIVE_DOC_MIME, tabId))}`;
 }
 
 async function openFromDrive(query) {
   setError('');
+  const search = query ? `"${query.replace(/"/g, '')}"` : '';
   let pick;
   try {
-    pick = await openPicker({ query });
+    pick = await openPicker({ query: search });
   } catch (error) {
     console.error('[cadence] picker failed:', error);
     setError(`Couldn’t open the Google Picker: ${error?.message || error}`);
@@ -216,7 +262,9 @@ async function renderLibrary() {
       `<svg class="library-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LIBRARY_ICONS[entry.type] || LIBRARY_ICONS.docs}</svg>` +
       `<div class="library-main"><div class="library-name"></div><div class="library-meta"></div></div>` +
       `<button class="library-del" type="button" title="Forget" aria-label="Forget this document">&times;</button>`;
-    row.querySelector('.library-name').textContent = entry.title || prettyTitle(entry.id);
+    const nameEl = row.querySelector('.library-name');
+    nameEl.textContent = entry.title || prettyTitle(entry.id);
+    nameEl.title = nameEl.textContent;
 
     const meta = [];
     if (entry.inProgress) meta.push('<span class="resume">Resume</span>');
@@ -240,13 +288,36 @@ async function renderLibrary() {
   }
 }
 
-// A ?q= param (from clicking the extension on a Google file) primes the Picker search.
 const bootParams = new URLSearchParams(location.search);
-const pendingQuery = bootParams.get('q') || '';
-if (pendingQuery) driveOpenLabel.textContent = `Find “${pendingQuery}” in Drive`;
-driveOpenBtn.addEventListener('click', () => openFromDrive(pendingQuery));
+let pendingQuery = bootParams.get('q') || '';
+if (pendingQuery) primeDriveButton(pendingQuery);
+driveOpenBtn.addEventListener('click', () => {
+  const query = pendingQuery;
+  if (pendingQuery) {
+    pendingQuery = '';
+    unprimeDriveButton();
+  }
+  openFromDrive(query);
+});
 
-// A ?url= param opens that document; otherwise restore the last local PDF for this tab.
+function primeDriveButton(query) {
+  driveOpenLabel.textContent = `Find “${query}” in Drive`;
+  driveOpenBtn.classList.add('primed');
+  driveHint.replaceChildren(
+    'Cadence can’t open a Google Doc directly — pick ',
+    Object.assign(document.createElement('strong'), { textContent: `“${query}”` }),
+    ' from your Drive to read it.'
+  );
+  driveHint.hidden = false;
+  driveOpenBtn.focus();
+}
+
+function unprimeDriveButton() {
+  driveOpenLabel.textContent = 'Open from Google Drive';
+  driveOpenBtn.classList.remove('primed');
+  driveHint.hidden = true;
+}
+
 const initialUrl = bootParams.get('url');
 if (initialUrl) {
   openUrl(initialUrl);
@@ -308,5 +379,7 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
   if (activePosKey && changes[activePosKey]?.newValue === undefined && activePosKey in changes) {
     positionCleared = true;
   }
-  if (Object.values(changes).some((c) => c.newValue === undefined)) renderLibrary();
+  const docChanged = Object.keys(changes).some((k) => k.startsWith(DOC_PREFIX));
+  const anyRemoved = Object.values(changes).some((c) => c.newValue === undefined);
+  if (docChanged || anyRemoved) renderLibrary();
 });

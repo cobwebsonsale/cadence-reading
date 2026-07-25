@@ -1,7 +1,7 @@
 // Per-document notes persist in chrome.storage.local (larger, device-local, unlike synced settings).
 const PREFIX = 'dr-notes:';
 const POSITION_PREFIX = 'dr-pos:';
-const DOC_PREFIX = 'dr-doc:';
+export const DOC_PREFIX = 'dr-doc:';
 
 // Run fn with chrome.storage.local, swallowing absence/errors and returning fallback.
 async function withLocal(fn, fallback) {

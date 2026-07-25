@@ -75,7 +75,8 @@
         pickerShown = true;
         const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
           .setMimeTypes('application/vnd.google-apps.document,application/pdf')
-          .setIncludeFolders(false);
+          .setIncludeFolders(false)
+          .setMode(google.picker.DocsViewMode.LIST);
         if (query && view.setQuery) view.setQuery(query);
 
         const picker = new google.picker.PickerBuilder()

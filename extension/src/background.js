@@ -1,7 +1,8 @@
 import { fetchDoc } from './api/docs.js';
-import { fetchComments, fetchDocText } from './api/drive.js';
+import { fetchComments, fetchDocText, fetchFileName } from './api/drive.js';
 import { fetchPdfBytes } from './api/pdf.js';
 import { parseDocRef, stripGoogleSuffix } from './gdocs.js';
+import { DOC_PREFIX } from './notes/storage.js';
 
 function getToken(interactive) {
   return new Promise((resolve, reject) => {
@@ -48,6 +49,9 @@ const handlers = {
   async fetchPdfBytes({ fileId }) {
     return withToken((token) => fetchPdfBytes(fileId, token));
   },
+  async fetchFileName({ fileId }) {
+    return withToken((token) => fetchFileName(fileId, token));
+  },
   async getAuthToken() {
     return getToken(true);
   },
@@ -69,9 +73,6 @@ function serializeError(error) {
   };
 }
 
-const DOC_PREFIX = 'dr-doc:';
-
-// A previously-picked file keeps its drive.file grant, so we can re-open it without the Picker.
 async function fileIsGranted(fileId) {
   if (!fileId) return false;
   const store = await chrome.storage.local.get(null);

@@ -2,11 +2,13 @@ import { getAuthToken } from '../src/rpc.js';
 
 const PICKER_ORIGIN = 'https://picker.bharatmunshi.cc';
 
-// Opens the hosted Google Picker in a popup and resolves the chosen file, or null on
-// cancel/close. Call this synchronously from a user gesture — the popup must open before
-// the (async) token fetch, or the browser blocks it.
 export function openPicker({ query } = {}) {
-  const popup = window.open(PICKER_ORIGIN, 'cadence-picker', 'width=1000,height=680');
+  const width = 1000;
+  const height = 680;
+  const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+  const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+  const features = `popup=yes,width=${width},height=${height},left=${left},top=${top}`;
+  const popup = window.open(PICKER_ORIGIN, 'cadence-picker', features);
   if (!popup) {
     return Promise.reject(new Error('Popup blocked — allow popups to open the Google Picker.'));
   }

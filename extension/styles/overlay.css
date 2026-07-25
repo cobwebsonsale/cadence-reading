@@ -61,7 +61,6 @@
   --dr-highlight: rgba(245, 181, 68, 0.30);
   --dr-highlight-strong: #f5b544;
 
-  /* Dark reading surface: warm near-black paper, soft off-white ink */
   --dr-paper-bg: #24211c;
   --dr-paper-fg: #ddd6c8;
   --dr-paper-border: #47433a;
@@ -322,7 +321,6 @@
   vertical-align: -0.25em;
   mix-blend-mode: multiply;
 }
-/* on dark paper, invert the black-on-white crop to white-on-black and screen it in */
 .dr-overlay[data-theme="dark"] .dr-glyph-img {
   filter: invert(1);
   mix-blend-mode: screen;
@@ -426,7 +424,6 @@
   pointer-events: none;
 }
 
-/* tab picker: a "current tab" pill at the left of the HUD; hover opens the list upward */
 .dr-hud-tabs { position: relative; display: flex; }
 .dr-hud-tabs-btn {
   display: inline-flex;
@@ -445,7 +442,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dr-hud-tabs-btn::after { content: '\25BE'; color: var(--dr-chrome-dim); font-size: 10px; }
+.dr-hud-tabs-btn::after {
+  content: '\25BE';
+  color: var(--dr-chrome-dim);
+  font-size: 10px;
+  transition: transform var(--dr-dur-fast) var(--dr-ease);
+}
+.dr-hud-tabs.dr-open .dr-hud-tabs-btn::after { transform: rotate(180deg); }
 .dr-hud-tabs-btn:hover { border-color: var(--dr-border-strong); }
 .dr-hud-tabs-menu {
   position: absolute;
@@ -467,8 +470,7 @@
   transform: translateY(4px);
   transition: opacity var(--dr-dur-fast) var(--dr-ease), transform var(--dr-dur-fast) var(--dr-ease);
 }
-.dr-hud-tabs:hover .dr-hud-tabs-menu,
-.dr-hud-tabs:focus-within .dr-hud-tabs-menu {
+.dr-hud-tabs.dr-open .dr-hud-tabs-menu {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);

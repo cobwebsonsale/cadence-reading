@@ -37,6 +37,10 @@ let activeTheme = 'light';
 
 const themeSetting = () => radioValue('theme') || DEFAULTS.theme;
 
+function applyPageTheme() {
+  document.documentElement.dataset.theme = themeSetting();
+}
+
 function loadPickersForTheme() {
   activeTheme = resolveTheme(themeSetting());
   paperBg.value = paper[activeTheme].bg;
@@ -48,7 +52,9 @@ function loadPickersForTheme() {
 function reflectPreview() {
   preview.style.setProperty('--dr-reader-leading', lineHeight.value);
   preview.style.lineHeight = lineHeight.value;
-  preview.style.width = `${(contentWidth.value / LIMITS.maxContentWidth) * 100}%`;
+  preview.style.width = `${contentWidth.value}px`;
+  const frameWidth = preview.parentElement.clientWidth || LIMITS.maxContentWidth;
+  preview.style.zoom = frameWidth / LIMITS.maxContentWidth;
   preview.style.backgroundColor = paperBg.value;
   preview.style.color = paperFg.value;
   preview.style.fontFamily = fontFamily.value.trim() || DEFAULT_READER_FONT;
@@ -77,6 +83,7 @@ async function init() {
   lineHeight.value = settings.lineHeight;
   paper.light = { bg: settings.paperBg, fg: settings.paperFg };
   paper.dark = { bg: settings.paperBgDark, fg: settings.paperFgDark };
+  applyPageTheme();
   loadPickersForTheme();
   reflectPreview();
 
@@ -84,6 +91,7 @@ async function init() {
   for (const c of [contentWidth, lineHeight, fontFamily]) {
     c.addEventListener('input', reflectPreview);
   }
+  window.addEventListener('resize', reflectPreview);
   const onPaperInput = () => {
     paper[activeTheme] = { bg: paperBg.value, fg: paperFg.value };
     reflectPreview();
@@ -92,6 +100,7 @@ async function init() {
   paperFg.addEventListener('input', onPaperInput);
   for (const r of document.querySelectorAll('input[name="theme"]')) {
     r.addEventListener('change', () => {
+      applyPageTheme();
       loadPickersForTheme();
       reflectPreview();
     });
@@ -164,7 +173,7 @@ function pageRow(entry) {
   const href = document.createElement(link ? 'a' : 'span');
   href.className = 'page-href';
   href.textContent = entry.title || entry.href;
-  href.title = entry.href;
+  href.title = entry.title ? `${entry.title}\n${entry.href}` : entry.href;
   if (link) {
     href.href = entry.href;
     href.target = '_blank';

@@ -30,7 +30,9 @@ class Session {
     this.startIndex = opts.startIndex || 0;
     this.onPosition = opts.onPosition || null;
     this.onPrepared = opts.onPrepared || null;
+    this.onResolved = opts.onResolved || null;
     this.onSwitchTab = opts.onSwitchTab || null;
+    this.onEnd = opts.onEnd || null;
     this.overlay = null;
     this.loop = null;
     this.detachInput = null;
@@ -83,6 +85,12 @@ class Session {
     this.overlay.content.addEventListener('click', (e) => this.onDocLinkClick(e));
 
     this.comments = (await this.source.prepare(this)) || new Map();
+    if (this.onResolved) {
+      const firstTabId = this.tabs?.[0]?.tabId;
+      const keyTabId = this.tabId && this.tabId !== firstTabId ? this.tabId : null;
+      const start = await this.onResolved({ keyTabId, title: this.docTitle });
+      if (Number.isFinite(start)) this.startIndex = start;
+    }
     this.onPrepared?.(this.docTitle || '');
     if (this.comments.size) this.mountCallouts();
     this.applyComments();
@@ -303,8 +311,6 @@ class Session {
     this.notes?.toggle();
   }
 
-  // The reader reopens the doc at the new tab (fresh fetch + build), keeping per-tab
-  // position/notes; flush the current tab's position first so it resumes correctly.
   switchTab(tabId) {
     if (!tabId || tabId === this.tabId || !this.onSwitchTab) return;
     this.flushPosition?.();
@@ -343,6 +349,7 @@ class Session {
     this.overlay?.destroy();
     restorePage(this.pageState);
     if (activeSession === this) activeSession = null;
+    this.onEnd?.();
   }
 }
 
