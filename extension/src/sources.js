@@ -1,17 +1,21 @@
 import { fetchDoc, fetchComments, fetchDocText, fetchPdfBytes } from './rpc.js';
 import { bytesFromBase64 } from './bytes.js';
+import { parseDocRef } from './gdocs.js';
+import { listTabs, resolveTabId, tabTitle } from './render/tabs-model.js';
 
 export function detectSource(href) {
-  let match = href.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
-  if (match) return docsSource(match[1]);
-
-  match = href.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (match) return pdfSource(match[1]);
-
-  return null;
+  const ref = parseDocRef(href);
+  if (!ref) return null;
+  return ref.kind === 'doc' ? docsSource(ref.fileId, ref.tabId) : pdfSource(ref.fileId);
 }
 
-function docsSource(docId) {
+function composeDocTitle(doc, tabs, tabId) {
+  const docTitle = doc.title || '';
+  const name = tabTitle(doc, tabId);
+  return tabs.length > 1 && name ? `${docTitle} — ${name}` : docTitle;
+}
+
+function docsSource(docId, requestedTabId) {
   return {
     type: 'docs',
     async prepare(session) {
@@ -29,11 +33,15 @@ function docsSource(docId) {
         fetchDocText(docId).catch(() => ''),
       ]);
 
-      session.docTitle = doc.title || '';
+      session.doc = doc;
+      session.tabs = listTabs(doc);
+      session.tabId = resolveTabId(doc, requestedTabId);
+      session.docTitle = composeDocTitle(doc, session.tabs, session.tabId);
 
       buildDocument(doc, {
         mount: session.overlay.content,
         settings: session.settings,
+        tabId: session.tabId,
       });
       reconcileChips(session.overlay.content, exportText);
 

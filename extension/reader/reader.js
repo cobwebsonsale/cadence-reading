@@ -1,23 +1,19 @@
 import { startSessionWithSource } from '../src/session.js';
 import { localPdfSource, detectSource } from '../src/sources.js';
 import { loadPosition, savePosition, saveDocEntry, listDocEntries, deleteDocEntry, positionKey } from '../src/notes/storage.js';
-import { listDriveFiles } from '../src/rpc.js';
+import { parseDocRef, synthesizeUrl, DRIVE_DOC_MIME } from '../src/gdocs.js';
 import * as persist from './persist.js';
 import { handlesSupported, saveHandle, loadHandle, deleteHandle, ensureReadPermission } from './handles.js';
+import { openPicker } from './picker.js';
 
 const dropZone = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 const errorEl = document.getElementById('error');
 const loadingName = document.getElementById('loadingName');
-const urlForm = document.getElementById('url-form');
-const urlInput = document.getElementById('url-input');
 const libraryEl = document.getElementById('library');
 const libraryListEl = document.getElementById('library-list');
-const driveBrowseBtn = document.getElementById('drive-browse');
-const driveModal = document.getElementById('drive-modal');
-const driveClose = document.getElementById('drive-close');
-const driveSearch = document.getElementById('drive-search');
-const driveList = document.getElementById('drive-list');
+const driveOpenBtn = document.getElementById('drive-open');
+const driveOpenLabel = document.getElementById('drive-open-label');
 
 let activePosKey = null;
 let positionCleared = false;
@@ -107,7 +103,7 @@ async function chooseFile() {
   openFile(await handle.getFile(), handle);
 }
 
-// Open a Google Doc / Drive PDF by pasted link, keying reveal position by the URL.
+// Open a Google Doc / Drive PDF by its (synthesized) URL, keying reveal position by it.
 async function openUrl(rawUrl) {
   setError('');
   const url = (rawUrl || '').trim();
@@ -115,16 +111,21 @@ async function openUrl(rawUrl) {
 
   const source = detectSource(url);
   if (!source) {
-    setError('Paste a Google Doc or Google Drive PDF link.');
+    setError('That link isn’t a Google Doc or Drive PDF.');
     return;
   }
 
-  // Reflect the opened doc in the page URL so a reload re-opens the same document.
+  // Reflect the opened doc in the page URL so a reload re-opens the same document + tab.
   const params = new URLSearchParams(location.search);
   if (params.get('url') !== url) {
     params.set('url', url);
+    params.delete('q');
+    params.delete('tab');
     history.replaceState(null, '', `${location.pathname}?${params}`);
   }
+
+  const ref = parseDocRef(url);
+  const onSwitchTab = ref?.kind === 'doc' ? (tabId) => goToDocTab(ref.fileId, tabId) : null;
 
   setLoading(source.type === 'docs' ? 'document' : 'PDF');
   try {
@@ -132,12 +133,40 @@ async function openUrl(rawUrl) {
     positionCleared = false;
     const onPosition = (index, done) => { if (!positionCleared) savePosition(url, done ? 0 : index); };
     const onPrepared = (title) => saveDocEntry(url, { title, type: source.type });
-    await startSessionWithSource(source, { startIndex: await loadPosition(url), onPosition, onPrepared });
+    await startSessionWithSource(source, {
+      startIndex: await loadPosition(url),
+      onPosition,
+      onPrepared,
+      onSwitchTab,
+    });
   } catch (error) {
     setLoading(null);
-    console.error('[cadence] failed to open link:', error);
-    setError(`Couldn’t open that link: ${error?.message || error}`);
+    console.error('[cadence] failed to open document:', error);
+    if (error?.status === 403 || error?.status === 404) {
+      setError('Access to this document was lost — use “Open from Google Drive” to grant it again.');
+    } else {
+      setError(`Couldn’t open that document: ${error?.message || error}`);
+    }
   }
+}
+
+// A tab switch reloads the reader at the new tab URL, rerunning the fetch/build pipeline
+// so per-tab position and notes keys take effect.
+function goToDocTab(fileId, tabId) {
+  location.search = `?url=${encodeURIComponent(synthesizeUrl(fileId, DRIVE_DOC_MIME, tabId))}`;
+}
+
+async function openFromDrive(query) {
+  setError('');
+  let pick;
+  try {
+    pick = await openPicker({ query });
+  } catch (error) {
+    console.error('[cadence] picker failed:', error);
+    setError(`Couldn’t open the Google Picker: ${error?.message || error}`);
+    return;
+  }
+  if (pick) openUrl(synthesizeUrl(pick.fileId, pick.mimeType, null));
 }
 
 const LIBRARY_ICONS = {
@@ -211,13 +240,14 @@ async function renderLibrary() {
   }
 }
 
-urlForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  openUrl(urlInput.value);
-});
+// A ?q= param (from clicking the extension on a Google file) primes the Picker search.
+const bootParams = new URLSearchParams(location.search);
+const pendingQuery = bootParams.get('q') || '';
+if (pendingQuery) driveOpenLabel.textContent = `Find “${pendingQuery}” in Drive`;
+driveOpenBtn.addEventListener('click', () => openFromDrive(pendingQuery));
 
 // A ?url= param opens that document; otherwise restore the last local PDF for this tab.
-const initialUrl = new URLSearchParams(location.search).get('url');
+const initialUrl = bootParams.get('url');
 if (initialUrl) {
   openUrl(initialUrl);
 } else {
@@ -266,85 +296,6 @@ dropZone.addEventListener('drop', async (e) => {
 
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
-
-const DRIVE_DOC_MIME = 'application/vnd.google-apps.document';
-const DRIVE_ITEM_ICONS = {
-  doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/>',
-  pdf: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
-};
-
-const driveUrl = (file) =>
-  file.mimeType === DRIVE_DOC_MIME
-    ? `https://docs.google.com/document/d/${file.id}/edit`
-    : `https://drive.google.com/file/d/${file.id}/view`;
-
-function driveStatus(text, isError) {
-  driveList.replaceChildren();
-  const p = document.createElement('div');
-  p.className = isError ? 'drive-status is-error' : 'drive-status';
-  p.textContent = text;
-  driveList.appendChild(p);
-}
-
-function renderDriveFiles(files) {
-  if (!files.length) return driveStatus('No matching Docs or PDFs.');
-  driveList.replaceChildren();
-  for (const file of files) {
-    const isDoc = file.mimeType === DRIVE_DOC_MIME;
-    const row = document.createElement('div');
-    row.className = 'drive-item';
-    row.innerHTML =
-      `<svg class="drive-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${isDoc ? DRIVE_ITEM_ICONS.doc : DRIVE_ITEM_ICONS.pdf}</svg>` +
-      `<div class="drive-item-main"><div class="drive-item-name"></div><div class="drive-item-meta"></div></div>`;
-    row.querySelector('.drive-item-name').textContent = file.name || 'Untitled';
-    const meta = [isDoc ? 'Doc' : 'PDF'];
-    const at = file.modifiedTime ? Date.parse(file.modifiedTime) : 0;
-    if (at) meta.push(relativeTime(at));
-    row.querySelector('.drive-item-meta').textContent = meta.join(' · ');
-    row.addEventListener('click', () => {
-      closeDriveModal();
-      openUrl(driveUrl(file));
-    });
-    driveList.appendChild(row);
-  }
-}
-
-let driveReqId = 0;
-async function loadDriveFiles(query) {
-  const reqId = ++driveReqId;
-  driveStatus('Loading…');
-  try {
-    const files = await listDriveFiles(query);
-    if (reqId === driveReqId) renderDriveFiles(files);
-  } catch (error) {
-    if (reqId === driveReqId) driveStatus(`Couldn't reach Drive: ${error?.message || error}`, true);
-  }
-}
-
-let driveSearchTimer = 0;
-function openDriveModal() {
-  driveModal.hidden = false;
-  driveSearch.value = '';
-  driveSearch.focus();
-  loadDriveFiles('');
-}
-function closeDriveModal() {
-  driveModal.hidden = true;
-  clearTimeout(driveSearchTimer);
-}
-
-driveBrowseBtn.addEventListener('click', openDriveModal);
-driveClose.addEventListener('click', closeDriveModal);
-driveModal.addEventListener('click', (e) => {
-  if (e.target === driveModal) closeDriveModal();
-});
-driveSearch.addEventListener('input', () => {
-  clearTimeout(driveSearchTimer);
-  driveSearchTimer = setTimeout(() => loadDriveFiles(driveSearch.value.trim()), 250);
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !driveModal.hidden) closeDriveModal();
-});
 
 renderLibrary();
 document.addEventListener('visibilitychange', () => {

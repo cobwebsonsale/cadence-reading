@@ -51,7 +51,14 @@ export function createOverlay({ theme }) {
   keys.innerHTML = HUD_KEYS;
   help.append(helpBtn, keys);
 
-  hudEl.append(hudStatus, hudSpeed, flags, help);
+  const tabPicker = el('div', 'dr-hud-tabs');
+  tabPicker.style.display = 'none';
+  const tabBtn = el('button', 'dr-hud-tabs-btn');
+  tabBtn.type = 'button';
+  const tabMenu = el('div', 'dr-hud-tabs-menu');
+  tabPicker.append(tabBtn, tabMenu);
+
+  hudEl.append(tabPicker, hudStatus, hudSpeed, flags, help);
 
   root.append(stage, hudEl);
   document.documentElement.appendChild(root);
@@ -69,6 +76,25 @@ export function createOverlay({ theme }) {
     },
     setHidden(hidden) {
       hudEl.classList.toggle('dr-hud-hidden', hidden);
+    },
+    setTabs(tabs, currentTabId, onSelect) {
+      if (!tabs || tabs.length <= 1) {
+        tabPicker.style.display = 'none';
+        return;
+      }
+      const current = tabs.find((t) => t.tabId === currentTabId) || tabs[0];
+      tabBtn.textContent = current.title || 'Tab';
+      tabMenu.replaceChildren();
+      for (const tab of tabs) {
+        const item = el('button', 'dr-hud-tab-item');
+        item.type = 'button';
+        item.textContent = tab.title || 'Untitled tab';
+        item.style.paddingLeft = `${12 + tab.level * 14}px`;
+        item.classList.toggle('dr-hud-tab-current', tab.tabId === current.tabId);
+        item.addEventListener('click', () => onSelect(tab.tabId));
+        tabMenu.appendChild(item);
+      }
+      tabPicker.style.display = '';
     },
   };
 

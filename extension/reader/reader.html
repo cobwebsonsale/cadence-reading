@@ -227,22 +227,9 @@
       </div>
       <p class="tagline">Read anything at your own pace, character by character.</p>
 
-      <form id="url-form" class="url-form">
-        <input
-          id="url-input"
-          type="url"
-          class="url-input"
-          placeholder="Paste a Google Doc or Drive PDF link"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="Google Doc or Drive PDF link"
-        />
-        <button type="submit" class="url-open">Open</button>
-      </form>
-
-      <button type="button" id="drive-browse" class="drive-browse">
+      <button type="button" id="drive-open" class="drive-browse">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-        Browse your Google Drive
+        <span id="drive-open-label">Open from Google Drive</span>
       </button>
 
       <div class="or-sep">or</div>
@@ -287,17 +274,6 @@
         </li>
       </ul>
     </main>
-
-    <div id="drive-modal" class="drive-modal" hidden>
-      <div class="drive-card" role="dialog" aria-label="Open from Google Drive">
-        <div class="drive-head">
-          <span class="drive-title">Open from Google Drive</span>
-          <button type="button" id="drive-close" class="drive-close" aria-label="Close">&times;</button>
-        </div>
-        <input id="drive-search" class="drive-search" type="search" placeholder="Search your Docs and PDFs…" autocomplete="off" spellcheck="false" />
-        <div id="drive-list" class="drive-list"></div>
-      </div>
-    </div>
 
     <script type="module" src="reader.js"></script>
   </body>

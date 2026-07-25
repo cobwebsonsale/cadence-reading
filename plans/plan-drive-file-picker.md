@@ -1,112 +1,151 @@
-# Migrate off `drive.readonly` → `drive.file` + Google Picker
+# Migrate to `drive.file` + Google Picker, with Docs tabs
 
 ## Goal
 
-Keep rich Google Docs (Docs API structure) + comments + Drive PDFs, but drop the
-**restricted** `drive.readonly` scope for the **non-sensitive** `drive.file` scope —
-no CASA / security assessment / annual audit, publishable without restricted-scope
-verification. Local PDF upload is unaffected.
+Drop the **restricted** `drive.readonly` scope for the **non-sensitive** `drive.file`
+scope (no CASA / audit, publishable without restricted-scope verification), keeping rich
+Docs rendering + comments + Drive PDFs. Add first-class support for **Google Docs tabs**
+(multi-tab documents). Local PDF upload is unaffected.
 
-## Verified facts (Google docs)
+## Verified facts (Google)
 
-- `documents.get`, `comments.list`, `files.get`, `files.export` **all accept `drive.file`**.
-- `drive.file` is **non-sensitive** (no CASA).
-- `drive.file` is **per-file, Picker-only**: the app can only touch files the user
-  explicitly opens via the Google Picker. No arbitrary URL/ID access; `files.list`
-  returns only app-opened files.
-- **Grants persist**: once a user picks a file, the app keeps access to it across
-  sessions — so the recent-docs library can re-open a past file **without** re-picking.
-  The Picker is only needed for *new* files.
+- `documents.get`, `comments.list`, `files.get`, `files.export` all accept `drive.file`.
+- `drive.file` is **non-sensitive** (no CASA); **per-file, Picker-only** — the app only
+  touches files the user explicitly picks. Grants **persist** across sessions, so the
+  library re-opens a past pick without re-picking.
+- `documents.get?includeTabsContent=true` (already used) returns `document.tabs[]`; each
+  tab has `tabProperties` (`tabId`, `title`, `index`, `nestingLevel`) + `documentTab`
+  (`body`, `lists`, `inlineObjects`) + nested `childTabs[]`.
 
-## What stays / what goes
+**Verify during build**: the doc URL's `?tab=t.<id>` matches `tabProperties.tabId`; the
+Picker's `DocsView.setQuery()` pre-seeds its search field.
 
-**Stays**: Docs rendering (`render/*`), comments, PDF pipeline, reveal engine, notes,
-local PDF drop/pick + library, the Docs/Drive-PDF source strategies in `sources.js`
-(they work unchanged on a picked file), the recent-docs library (re-opens past picks).
+## Resolved config
 
-**Goes** (all depend on broad access the `drive.file` model forbids):
-- Paste-a-link box (can't open an arbitrary URL).
-- "Open the doc I'm currently viewing" — the `docs.google.com` content script + the
-  action/`Cmd+Shift+R` URL-sniffing trigger.
-- The custom Drive browser modal (`files.list` / `listDriveFiles`).
+- `PICKER_ORIGIN` = `https://picker.bharatmunshi.cc` (GitHub Pages, `/docs` on `main`,
+  public repo). Page + `CNAME` live in `docs/`; `appId`/`apiKey` filled in `docs/index.html`.
+- Keep the toolbar action + `Ctrl+Shift+R` (both grant `activeTab`), repurposed for the
+  title-prefill flow below.
 
-## The MV3 constraint
+## The MV3 / hosting constraint
 
-The Picker needs Google's hosted JS (`apis.google.com/js/api.js`); MV3 bans remote
-scripts in extension pages. So the Picker must run on a **separately hosted static
-page** (e.g. GitHub Pages — no backend needed) that the extension opens in a popup and
-talks to via `postMessage`. Requires a **Google API key** in addition to the OAuth
-client.
+The Picker needs Google's hosted `apis.google.com/js/api.js`; MV3 bans remote scripts in
+extension pages. So the Picker runs on the hosted static page at `PICKER_ORIGIN`, opened
+in a popup and driven over `postMessage`. Handshake: page → `picker-ready`; extension →
+`picker-init{token, query}` (origin-verified); page → `picker-pick{fileId,mimeType,name}`
+or `picker-cancel`. Token passed only via `postMessage` with a strict `targetOrigin`,
+never in the URL.
 
-## Architecture — the Picker page (hosted, static, NOT bundled)
+## Identifiers are synthesized, never fetched
 
-A standalone HTML page at a stable HTTPS origin `PICKER_ORIGIN`:
-1. Loads `gapi` + `google.picker`.
-2. `postMessage({type:'picker-ready'})` to `window.opener`.
-3. Receives `{type:'picker-init', token, apiKey, appId}` (verify `event.origin` is the
-   extension origin), builds a Picker for Docs + PDFs, shows it.
-4. On pick, `postMessage({type:'picker-pick', fileId, mimeType, name})` back; on cancel,
-   `{type:'picker-cancel'}`. Then closes.
+We key everything on a **doc-URL-shaped identifier** built from `(fileId, tabId)`:
+`https://docs.google.com/document/d/<fileId>/edit?tab=t.<tabId>` (PDF:
+`https://drive.google.com/file/d/<fileId>/view`). It is used only as (1) a storage key and
+(2) a parse target for `detectSource` (extract `fileId` + `tabId`). Content is always
+fetched by `fileId` via `documents.get` — we never request the docs.google.com origin
+(hence dropping that host permission). This keeps `sources.js`/`detectSource` and the
+`?url=` reload path unchanged.
 
-Token is passed via `postMessage` with a strict `targetOrigin` — **never** in the URL.
+## Title-prefill (replaces "open current tab")
+
+`drive.file` forbids opening an arbitrary URL, and `files.list` is gone, so the in-reader
+Drive search is removed — the only search is the **Picker's own**, which we pre-seed:
+
+1. Toolbar action reads `tab.title` + `tab.url` via `activeTab` (non-sensitive; no content
+   script, no docs.google.com host permission).
+2. Extract `fileId` + `tabId`; clean the title (`stripGoogleSuffix`, drops
+   ` - Google Docs`/`Sheets`/`Slides`/`Drive`).
+3. If `fileId` matches a stored library entry (grant persists) → open the reader with the
+   synthesized `?url=` (that tab) directly, no Picker.
+4. Else → open the reader with `?q=<title>` (and stash `tabId`); the reader primes the
+   "Open from Google Drive" button and, on click, opens the Picker with
+   `setQuery(title)`. After the pick, synthesize the URL (re-attaching the stashed
+   `tabId`) → existing `openUrl` path.
+
+## Docs tabs
+
+Today `resolveDocModel` renders only the first tab with a body; every other tab is
+dropped and the viewed tab is ignored. Generalize:
+
+- **Model helpers (pure, tested)** in `render/tabs-model.js`:
+  - `listTabs(doc)` → flattened, ordered `[{ tabId, title, level }]` (walks `childTabs`).
+  - `resolveTabContent(doc, tabId)` → `{ content, lists, inlineObjects }` for `tabId`,
+    falling back to first-with-body (today's behavior).
+- **Selection** rides in the identifier's `?tab=` query param. `positionKey`/`notesKey`
+  strip only the `#` fragment, so **per-tab position + notes fall out automatically**
+  (required for correctness: each tab is distinct text; highlights re-anchor per tab).
+- **Recents**: one entry per visited tab, title disambiguated as `Doc title — Tab name`
+  (compose in `saveDocEntry`).
+- **HUD switcher** (Docs, >1 tab only): a compact "current tab" pill at the **left of the
+  HUD**, hover/`focus-within` opening an upward popover list (reuses the `.dr-hud-help`
+  pattern), child-tabs indented. Selecting a tab calls `session.switchTab(tabId)`.
+- **`switchTab(tabId)`** (mid-read, no network — the full doc is already in memory from
+  the initial `includeTabsContent` fetch): flush current position → rebuild the content
+  column via `resolveTabContent` → rebuild reveal steps/loop → re-point position save +
+  notes panel to the new tab's key → derive the new `?tab=` identifier and
+  `history.replaceState` it → update the HUD pill. Requires the session to own the
+  current doc identifier (so position/notes re-key on switch).
+- **Comments caveat**: comments are per-file, anchored by quoted-text match; comments
+  whose text is in a different tab than the one shown simply don't anchor.
 
 ## Extension changes
 
-- **`manifest.json`**
-  - `oauth2.scopes`: `drive.readonly` → `drive.file`.
-  - Remove `content_scripts` (docs/drive) and the docs/drive `web_accessible_resources`
-    `matches`.
-  - `host_permissions`: keep `docs.googleapis.com`, `www.googleapis.com`; drop
-    `docs.google.com`, `drive.google.com`. Add `PICKER_ORIGIN` if needed.
-  - Repurpose the `start-session` command + action to just open the reader (no URL
-    sniffing), or drop.
-- **`src/background.js`**
-  - `getToken` now yields a `drive.file` token.
-  - Remove the `listDriveFiles` handler + `listFiles` import.
-  - Keep `fetchDoc` / `fetchComments` / `fetchDocText` / `fetchPdfBytes` (work on picked
-    files).
-  - Add a `getAuthToken` RPC so the reader can obtain a token to hand the Picker page.
-  - `startSessionInActiveTab` → open the bare reader.
+- **`manifest.json`**: scope `drive.readonly` → `drive.file`; remove `content_scripts` and
+  the `web_accessible_resources` block; drop `docs.google.com`/`drive.google.com` and
+  `scripting` (verify unused); keep `docs.googleapis.com`, `www.googleapis.com`,
+  `identity`, `storage`, `activeTab`.
+- **`src/background.js`**: remove `listFiles`/`listDriveFiles`; add `getAuthToken` RPC;
+  rewrite the action handler for the title-prefill flow (library-match → `?url=`, else
+  `?q=`); keep `fetchDoc`/`fetchComments`/`fetchDocText`/`fetchPdfBytes`.
 - **`src/rpc.js`**: drop `listDriveFiles`; add `getAuthToken`.
-- **`src/api/drive.js`**: remove `listFiles`; keep `fetchComments` / `fetchDocText` and
-  the mime constants (used to synthesize the file URL).
-- **`src/content.js`**: delete.
-- **`src/sources.js`**: unchanged. Picker result (`fileId` + `mimeType`) is turned into
-  the same `docs.google.com` / `drive.google.com` URL the browser used, then fed to the
-  existing `detectSource` path.
-- **`reader/reader.js` + `reader/reader.html`**
-  - Remove the paste-a-link form and the custom Drive browser modal
-    (`driveModal`, `renderDriveFiles`, `loadDriveFiles`, `openDriveModal`, related CSS).
-  - Add an **"Open from Google Drive"** button → Picker flow: RPC `getAuthToken` →
-    open `PICKER_ORIGIN` popup → handshake → on pick, synthesize URL → `openUrl(...)`.
-  - Keep local PDF drop/pick + library. Library rows re-open past picks directly
-    (grant persists) with a graceful re-pick fallback if access was revoked.
+- **`src/api/drive.js`**: remove `listFiles`/`driveList`; keep `fetchComments`,
+  `fetchDocText`, mime constants.
+- **`src/content.js`**: delete (dead — nothing sends its `startSession` message — and its
+  host is gone).
+- **`src/sources.js`**: `detectSource` parses `fileId` + `tabId`; `docsSource(docId, tabId)`
+  threads `tabId` into `buildDocument`; add pure `synthesizeUrl(fileId, mimeType, tabId)`.
+- **`src/render/builder.js`**: `buildDocument(doc, { mount, settings, tabId })` uses
+  `resolveTabContent`; expose `listTabs` for the switcher.
+- **`src/session.js`**: own the current doc identifier; add `switchTab`; disambiguated
+  `docTitle`; per-tab position/notes re-keying.
+- **`src/overlay.js` + `styles/overlay.css`**: the HUD tab pill + popover.
+- **`reader/reader.js` + `reader.html`**: remove the paste-link form and Drive modal; add
+  "Open from Google Drive" → `reader/picker.js` (RPC `getAuthToken` → popup → handshake →
+  synthesize URL → `openUrl`); handle `?q=` (prime picker with title) and keep `?url=`
+  (reopen granted files / library / tab switch); revoked-grant `403/404` → re-pick prompt.
+- **`reader/picker.js`** (new): the popup handshake client.
+
+## Hosted Picker page (`docs/`, done)
+
+`docs/index.html` (handshake + `DocsView.setQuery`), `docs/CNAME`, `docs/README.md`.
+Remaining: user fills `appId`/`apiKey`; set `extensionId` for production.
 
 ## Google Cloud setup (user)
 
-1. Enable **Picker API**, **Docs API**, **Drive API**.
-2. OAuth client (Chrome-extension type) — scope `drive.file`; consent screen is
-   non-sensitive, publishable without verification.
-3. API key restricted to the **Picker API**, referrer-locked to `PICKER_ORIGIN`.
-4. Host the Picker page at `PICKER_ORIGIN`.
+Enable Picker/Docs/Drive APIs; OAuth client (Chrome-extension) scope `drive.file`; API key
+restricted to Picker API + referrer-locked to `PICKER_ORIGIN`.
+
+## Build order
+
+1. Pure helpers + tests: `synthesizeUrl`, `stripGoogleSuffix`, `parseDocRef`
+   (`fileId`+`tabId`), `listTabs`, `resolveTabContent`.
+2. Manifest + background + rpc + drive.js; delete content.js.
+3. Docs render: `buildDocument` renders the selected tab; disambiguated titles.
+4. HUD switcher + `session.switchTab` (mid-read rebuild + re-key).
+5. Picker page config + `picker.js` + reader wiring (remove paste-link/modal).
+6. Revoked-grant handling; docs (README/plan).
 
 ## Tradeoffs / losses
 
-Paste-link, open-current-tab, and browse-all-files are gone; opening a *new* Google
-file always goes through the Picker. Re-opening a previously-picked file (via the
-library) needs no Picker. One external static page is now part of the system (the
-extension was previously fully self-contained).
-
-## Open questions
-
-- Where to host `PICKER_ORIGIN` (GitHub Pages vs a domain)?
-- Keep or drop the keyboard command / toolbar action once URL-sniffing is gone?
-- Revoked-grant UX: detect `403` on a library re-open and prompt to re-pick.
+Paste-link, open-current-tab, browse-all-files go; a *new* file always goes through the
+Picker (re-opening a picked file/tab does not). One external static page is now part of
+the system.
 
 ## Verification
 
-- Pick a Doc → rich render + comments; pick a Drive PDF → renders; local PDF unchanged;
-  a library entry re-opens without the Picker.
-- Confirm the OAuth consent shows only `drive.file` and no restricted-scope warning.
-- Tests: add URL-synthesis-from-picked-id unit tests; remove the `drive.js` `listFiles`
-  tests.
+- Pick a Doc → rich render + comments; multi-tab doc → switcher lists tabs, switching
+  rebuilds; pick a Drive PDF → renders; local PDF unchanged; a library entry (per tab)
+  re-opens without the Picker; title-prefill seeds the Picker search.
+- OAuth consent shows only `drive.file`, no restricted-scope warning.
+- Tests: URL synthesis, title cleaning, ref parsing, `listTabs`/`resolveTabContent`;
+  remove `drive.js` `listFiles` tests.

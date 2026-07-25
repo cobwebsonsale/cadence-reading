@@ -29,4 +29,4 @@ export const fetchDocText = (docId) => call({ type: 'fetchDocText', docId });
 
 export const fetchPdfBytes = (fileId) => call({ type: 'fetchPdfBytes', fileId });
 
-export const listDriveFiles = (query) => call({ type: 'listDriveFiles', query });
+export const getAuthToken = () => call({ type: 'getAuthToken' });

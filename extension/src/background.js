@@ -1,6 +1,7 @@
 import { fetchDoc } from './api/docs.js';
-import { fetchComments, fetchDocText, listFiles } from './api/drive.js';
+import { fetchComments, fetchDocText } from './api/drive.js';
 import { fetchPdfBytes } from './api/pdf.js';
+import { parseDocRef, stripGoogleSuffix } from './gdocs.js';
 
 function getToken(interactive) {
   return new Promise((resolve, reject) => {
@@ -47,8 +48,8 @@ const handlers = {
   async fetchPdfBytes({ fileId }) {
     return withToken((token) => fetchPdfBytes(fileId, token));
   },
-  async listDriveFiles({ query }) {
-    return withToken((token) => listFiles(query, token));
+  async getAuthToken() {
+    return getToken(true);
   },
 };
 
@@ -68,20 +69,39 @@ function serializeError(error) {
   };
 }
 
-async function startSessionInActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const url = tab?.url || '';
-  const supported =
-    /^https:\/\/docs\.google\.com\/document\//.test(url) ||
-    /^https:\/\/drive\.google\.com\/file\//.test(url);
+const DOC_PREFIX = 'dr-doc:';
 
-  // Always read in a dedicated reader tab, passing the doc URL so a reload re-opens it.
-  const reader = chrome.runtime.getURL('reader/reader.html');
-  await chrome.tabs.create({ url: supported ? `${reader}?url=${encodeURIComponent(url)}` : reader });
+// A previously-picked file keeps its drive.file grant, so we can re-open it without the Picker.
+async function fileIsGranted(fileId) {
+  if (!fileId) return false;
+  const store = await chrome.storage.local.get(null);
+  const needle = `/d/${fileId}`;
+  return Object.keys(store).some((key) => key.startsWith(DOC_PREFIX) && key.includes(needle));
 }
 
-chrome.action.onClicked.addListener(startSessionInActiveTab);
+async function openReaderForActiveTab(tab) {
+  const reader = chrome.runtime.getURL('reader/reader.html');
+  const ref = parseDocRef(tab?.url || '');
 
-chrome.commands.onCommand.addListener((command) => {
-  if (command === 'start-session') startSessionInActiveTab();
+  if (ref && (await fileIsGranted(ref.fileId))) {
+    await chrome.tabs.create({ url: `${reader}?url=${encodeURIComponent(tab.url)}` });
+    return;
+  }
+
+  const params = new URLSearchParams();
+  if (ref) {
+    const title = stripGoogleSuffix(tab?.title || '');
+    if (title) params.set('q', title);
+    if (ref.tabId) params.set('tab', ref.tabId);
+  }
+  const query = params.toString();
+  await chrome.tabs.create({ url: query ? `${reader}?${query}` : reader });
+}
+
+chrome.action.onClicked.addListener((tab) => openReaderForActiveTab(tab));
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'start-session') return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  openReaderForActiveTab(tab);
 });

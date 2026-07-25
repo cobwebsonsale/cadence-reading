@@ -4,28 +4,10 @@ import { buildCallout, positionCallout, layoutCallouts } from './render/comments
 import { buildSteps, buildBlockSteps, trimTrailingPauses } from './reveal/walker.js';
 import { createLoop } from './reveal/loop.js';
 import { attachInput } from './reveal/input.js';
-import { detectSource } from './sources.js';
 import { createNotesPanel } from './notes/panel.js';
-import { notesKey, loadPosition, savePosition, saveDocEntry } from './notes/storage.js';
+import { notesKey } from './notes/storage.js';
 
 let activeSession = null;
-
-export async function startSession() {
-  const source = detectSource(location.href);
-  if (!source) {
-    console.warn('[cadence] unsupported URL:', location.href);
-    return;
-  }
-  const href = location.href;
-  const startIndex = await loadPosition(href);
-  let saveTimer = 0;
-  const onPosition = (index) => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => savePosition(href, index), 400);
-  };
-  const onPrepared = (title) => saveDocEntry(href, { title, type: source.type });
-  return startSessionWithSource(source, { startIndex, onPosition, onPrepared });
-}
 
 export async function startSessionWithSource(source, opts = {}) {
   if (activeSession) return;
@@ -48,6 +30,7 @@ class Session {
     this.startIndex = opts.startIndex || 0;
     this.onPosition = opts.onPosition || null;
     this.onPrepared = opts.onPrepared || null;
+    this.onSwitchTab = opts.onSwitchTab || null;
     this.overlay = null;
     this.loop = null;
     this.detachInput = null;
@@ -147,6 +130,10 @@ class Session {
 
     this.overlay.root.classList.toggle('dr-bionic', this.bionicEnabled);
     this.overlay.hud.setToggle('bionic', this.bionicEnabled);
+
+    if (this.source.type === 'docs' && this.tabs?.length > 1) {
+      this.overlay.hud.setTabs(this.tabs, this.tabId, (tabId) => this.switchTab(tabId));
+    }
 
     this.overlay.hud.setStatus('');
     this.overlay.content.style.visibility = '';
@@ -314,6 +301,14 @@ class Session {
 
   toggleNotes() {
     this.notes?.toggle();
+  }
+
+  // The reader reopens the doc at the new tab (fresh fetch + build), keeping per-tab
+  // position/notes; flush the current tab's position first so it resumes correctly.
+  switchTab(tabId) {
+    if (!tabId || tabId === this.tabId || !this.onSwitchTab) return;
+    this.flushPosition?.();
+    this.onSwitchTab(tabId);
   }
 
   // Opening notes (by key or by clicking the panel) closes comments — mutually exclusive.

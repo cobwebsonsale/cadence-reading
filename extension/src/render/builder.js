@@ -2,6 +2,7 @@ import { textStyleToCss, paragraphStyleToCss, linkUrlOf, dimToPx } from './style
 import { createListContext } from './lists.js';
 import { buildInlineObject } from './objects.js';
 import { buildTable } from './tables.js';
+import { resolveTabContent } from './tabs-model.js';
 
 const NEWLINE = 0x0a;
 const VERTICAL_TAB = 0x0b;
@@ -10,8 +11,8 @@ const PARA_GAP_BREAK_PX = 7;
 
 const edgeMargin = (node, prop) => parseFloat(node.style[prop]) || 0;
 
-export function buildDocument(doc, { mount, settings }) {
-  const { content, lists, inlineObjects } = resolveDocModel(doc);
+export function buildDocument(doc, { mount, settings, tabId }) {
+  const { content, lists, inlineObjects } = resolveTabContent(doc, tabId);
 
   const ctx = {
     settings,
@@ -56,32 +57,6 @@ function bodyFontSize(content) {
     }
   }
   return dominant;
-}
-
-function resolveDocModel(doc) {
-  if (Array.isArray(doc.tabs) && doc.tabs.length) {
-    const tab = firstTabWithBody(doc.tabs) || doc.tabs[0];
-    const documentTab = tab.documentTab || {};
-    return {
-      content: documentTab.body?.content || [],
-      lists: documentTab.lists || doc.lists,
-      inlineObjects: documentTab.inlineObjects || doc.inlineObjects,
-    };
-  }
-  return {
-    content: doc.body?.content || [],
-    lists: doc.lists,
-    inlineObjects: doc.inlineObjects,
-  };
-}
-
-function firstTabWithBody(tabs) {
-  for (const tab of tabs) {
-    if (tab.documentTab?.body?.content?.length) return tab;
-    const childWithBody = tab.childTabs && firstTabWithBody(tab.childTabs);
-    if (childWithBody) return childWithBody;
-  }
-  return null;
 }
 
 export function buildContent(content, parent, ctx) {

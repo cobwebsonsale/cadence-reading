@@ -426,6 +426,72 @@
   pointer-events: none;
 }
 
+/* tab picker: a "current tab" pill at the left of the HUD; hover opens the list upward */
+.dr-hud-tabs { position: relative; display: flex; }
+.dr-hud-tabs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 3px 9px;
+  border: 1px solid var(--dr-border);
+  border-radius: 999px;
+  background: var(--dr-fill);
+  color: var(--dr-chrome-fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dr-hud-tabs-btn::after { content: '\25BE'; color: var(--dr-chrome-dim); font-size: 10px; }
+.dr-hud-tabs-btn:hover { border-color: var(--dr-border-strong); }
+.dr-hud-tabs-menu {
+  position: absolute;
+  left: 0;
+  bottom: 30px;
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--dr-chrome-bg);
+  border: 1px solid var(--dr-border);
+  border-radius: var(--dr-radius-md);
+  box-shadow: var(--dr-shadow-2);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity var(--dr-dur-fast) var(--dr-ease), transform var(--dr-dur-fast) var(--dr-ease);
+}
+.dr-hud-tabs:hover .dr-hud-tabs-menu,
+.dr-hud-tabs:focus-within .dr-hud-tabs-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.dr-hud-tab-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--dr-radius-sm);
+  background: transparent;
+  color: var(--dr-chrome-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.dr-hud-tab-item:hover { background: var(--dr-hover); }
+.dr-hud-tab-current { color: var(--dr-accent); font-weight: 600; }
+
 .dr-hud-status { color: var(--dr-accent); }
 .dr-hud-status:empty { display: none; }
 .dr-hud-speed { margin-left: auto; color: var(--dr-chrome-dim); font-variant-numeric: tabular-nums; }
